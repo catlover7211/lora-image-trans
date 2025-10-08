@@ -7,6 +7,8 @@ from typing import Iterable, List
 
 import av  # type: ignore
 import numpy as np
+from av.packet import Packet
+from av.video.frame import PictureType
 
 
 @dataclass(frozen=True)
@@ -63,7 +65,7 @@ class H264Encoder:
         self.fps = fps
         try:
             self.codec = av.CodecContext.create("libx264", "w")
-        except av.AVError:
+        except Exception:
             self.codec = av.CodecContext.create("h264", "w")
         self.codec.width = width
         self.codec.height = height
@@ -98,12 +100,16 @@ class H264Encoder:
 
         video_frame = av.VideoFrame.from_ndarray(frame_bgr, format="bgr24")
         if self._frame_index % self.keyframe_interval == 0:
-            video_frame.pict_type = "I"
+            try:
+                video_frame.pict_type = PictureType.I
+            except (AttributeError, TypeError):
+                # 部分後端僅接受整數或不支援強制設定，忽略錯誤
+                pass
         self._frame_index += 1
 
         for packet in self.codec.encode(video_frame):
             chunks.append(EncodedChunk(
-                data=packet.to_bytes(),
+                data=bytes(packet),
                 is_keyframe=packet.is_keyframe,
                 is_config=False,
             ))
@@ -114,7 +120,7 @@ class H264Encoder:
         chunks: List[EncodedChunk] = []
         for packet in self.codec.encode(None):
             chunks.append(EncodedChunk(
-                data=packet.to_bytes(),
+                data=bytes(packet),
                 is_keyframe=packet.is_keyframe,
                 is_config=False,
             ))
@@ -141,7 +147,7 @@ class H264Decoder:
             return []
 
         self._ensure_open()
-        packet = av.packet.Packet(chunk.data)
+        packet = Packet(chunk.data)
         frames = []
         for frame in self.codec.decode(packet):
             frames.append(frame.to_ndarray(format="bgr24"))
