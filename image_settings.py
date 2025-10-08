@@ -13,16 +13,16 @@ ColorMode = Literal["gray", "bgr"]
 class ImageSettings:
     """影像擷取與編碼相關的預設參數。"""
 
-    width: int = 160
+    width: int = 1920
     """輸出影像寬度（像素）。"""
 
-    height: int = 90
+    height: int = 1080
     """輸出影像高度（像素）。"""
 
-    target_bitrate: int = 150_000
+    target_bitrate: int = 100_000
     """H.264 目標位元率（每秒位元數）。實測低於 10 kbps 會導致編碼器初始化失敗。"""
 
-    keyframe_interval: int = 30
+    keyframe_interval: int = 100
     """每隔多少幀強制產生一次關鍵幀（I-Frame）。數值越大，差分壓縮越積極。"""
 
     motion_threshold: float = 2.0
@@ -31,7 +31,7 @@ class ImageSettings:
     max_idle_seconds: float = 10.0
     """允許最長無傳輸的時間（秒）。超過後即使無變化也會強制送出一幀。"""
 
-    transmit_interval: float = 10.0
+    transmit_interval: float = 1.0
     """兩幀之間的最短間隔（秒），用於節流避免過度佔用頻寬。"""
 
     color_mode: ColorMode = "gray"
