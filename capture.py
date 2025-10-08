@@ -9,7 +9,7 @@ from protocol import BAUD_RATE, FrameProtocol, auto_detect_serial_port
 FRAME_WIDTH = 80  # 寬度 (像素)
 FRAME_HEIGHT = 60  # 高度 (像素)
 JPEG_QUALITY = 10  # JPEG 壓縮品質 (0-100，數值越低壓縮越高)
-TRANSMIT_INTERVAL = 0.1  # 傳送間隔（秒）
+TRANSMIT_INTERVAL = 10  # 傳送間隔（秒）
 CAMERA_INDEX = 0  # 預設使用的攝影機索引
 
 
