@@ -152,7 +152,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--wavelet-levels', type=int, default=IMAGE_DEFAULTS.wavelet_levels, help='Wavelet 轉換層數 (僅 wavelet 編碼器使用，預設: %(default)s)')
     parser.add_argument('--wavelet-quant', type=int, default=IMAGE_DEFAULTS.wavelet_quant, help='Wavelet 量化步階 (僅 wavelet 編碼器使用，預設: %(default)s)')
     parser.add_argument('--tx-buffer', type=int, default=IMAGE_DEFAULTS.tx_buffer_size, help='傳送端待發緩衝區容量 (幀數，預設: %(default)s)')
-    parser.add_argument('--no-ack', action='store_true', help='停用 chunk 級 ACK（可能降低可靠度，但可減少等待時間）')
+    ack_group = parser.add_mutually_exclusive_group()
+    ack_group.add_argument('--ack', action='store_true', help='強制啟用 chunk 級 ACK（較可靠，但傳輸耗時較長）')
+    ack_group.add_argument('--no-ack', action='store_true', help='強制停用 chunk 級 ACK（降延遲，但可靠度降低）')
     return parser.parse_args()
 
 
@@ -186,6 +188,12 @@ def main() -> None:
     if capture_fps:
         fps_hint = max(fps_hint, capture_fps)
 
+    use_chunk_ack = IMAGE_DEFAULTS.use_chunk_ack
+    if args.ack:
+        use_chunk_ack = True
+    elif args.no_ack:
+        use_chunk_ack = False
+
     try:
         encoder = FrameEncoder(
             EncoderConfig(
@@ -208,7 +216,7 @@ def main() -> None:
         transmitter_config = TransmissionConfig(
             interval=max(args.interval, 0.0),
             buffer_size=max(args.tx_buffer, 1),
-            use_ack=not args.no_ack,
+            use_ack=use_chunk_ack,
         )
     except ValueError as exc:
         print(f'無效的傳輸參數: {exc}')
@@ -281,6 +289,7 @@ def main() -> None:
     sender_thread = threading.Thread(target=sender_worker, name='LoRaSender', daemon=True)
     sender_thread.start()
 
+    print(f'串流 ACK 模式: {"啟用" if transmitter_config.use_ack else "停用"}')
     print('攝影機已啟動，開始擷取與傳送影像...')
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")
 

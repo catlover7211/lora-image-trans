@@ -18,7 +18,9 @@ DEFAULT_RX_BUFFER = DEFAULT_IMAGE_SETTINGS.rx_buffer_size
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Receive CCTV frames over serial and display them.')
-    parser.add_argument('--no-ack', action='store_true', help='停用 chunk 級 ACK。與傳送端設定一致才有作用。')
+    ack_group = parser.add_mutually_exclusive_group()
+    ack_group.add_argument('--ack', action='store_true', help='強制啟用 chunk 級 ACK。需與傳送端一致。')
+    ack_group.add_argument('--no-ack', action='store_true', help='強制停用 chunk 級 ACK。需與傳送端一致。')
     parser.add_argument('--rx-buffer', type=int, default=DEFAULT_RX_BUFFER, help='接收端佇列容量 (幀數，預設: %(default)s)')
     return parser.parse_args()
 
@@ -49,9 +51,15 @@ def main() -> None:
     if ser is None:
         return
 
+    use_chunk_ack = DEFAULT_IMAGE_SETTINGS.use_chunk_ack
+    if args.ack:
+        use_chunk_ack = True
+    elif args.no_ack:
+        use_chunk_ack = False
+
     protocol = FrameProtocol(
         max_payload_size=MAX_PAYLOAD_SIZE,
-        use_chunk_ack=not args.no_ack,
+        use_chunk_ack=use_chunk_ack,
     )
     decoder = H264Decoder()
 
@@ -61,6 +69,7 @@ def main() -> None:
     pending_stats: list[FrameStats] = []
     pending_fragments = 0
 
+    print(f"串流 ACK 模式: {'啟用' if use_chunk_ack else '停用'}")
     print("已連接序列埠，開始等待接收影像...")
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")
 
