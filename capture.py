@@ -16,6 +16,7 @@ IMAGE_DEFAULTS = DEFAULT_IMAGE_SETTINGS
 DEFAULT_CAMERA_INDEX = 0
 DEFAULT_SERIAL_TIMEOUT = 1.0
 WINDOW_TITLE = 'CCTV Preview (Press q to quit)'
+MIN_USEFUL_PAYLOAD = 64  # bytes; skip extremely tiny predict-only frames to避免灰畫面
 
 
 @dataclass(frozen=True)
@@ -220,6 +221,17 @@ def main() -> None:
                 continue
 
             contains_config = any(chunk.is_config for chunk in chunks)
+            non_config_bytes = sum(len(chunk.data) for chunk in chunks if not chunk.is_config)
+            if (
+                non_config_bytes > 0
+                and non_config_bytes <= MIN_USEFUL_PAYLOAD
+                and not any(chunk.is_keyframe for chunk in chunks)
+            ):
+                # 極小的預測幀通常只包含雜訊，直接跳過維持上一張畫面
+                skipped_frames += 1
+                if isinstance(current_gray, np.ndarray):
+                    previous_gray = current_gray
+                continue
 
             current_gray = preview_frame
             if isinstance(current_gray, np.ndarray) and current_gray.ndim == 3:
