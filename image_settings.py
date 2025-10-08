@@ -20,7 +20,7 @@ class ImageSettings:
     height: int = 1200
     """輸出影像高度（像素）。配合 160×120 解析度可在 115200 bps 串列埠下達成 >10fps。"""
 
-    target_bitrate: int = 100_000
+    target_bitrate: int = 120_000
     """H.264 目標位元率（每秒位元數）。經估算可讓單幀 payload 約 1.2 KB，足以在串口帶寬內維持 10 fps。"""
 
     keyframe_interval: int = 30
