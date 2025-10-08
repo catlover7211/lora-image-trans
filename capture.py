@@ -25,6 +25,7 @@ class EncoderConfig:
     bitrate: int = IMAGE_DEFAULTS.target_bitrate
     keyframe_interval: int = IMAGE_DEFAULTS.keyframe_interval
     color_conversion: Optional[int] = color_conversion(IMAGE_DEFAULTS.color_mode)
+    codec: str = IMAGE_DEFAULTS.codec
 
     def __post_init__(self) -> None:
         if self.width <= 0 or self.height <= 0:
@@ -55,6 +56,7 @@ class FrameEncoder:
             fps=fps,
             bitrate=config.bitrate,
             keyframe_interval=max(1, config.keyframe_interval),
+            codec=config.codec,
         )
 
     def force_keyframe(self) -> None:
@@ -103,6 +105,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--width', type=int, default=IMAGE_DEFAULTS.width, help='輸出影像寬度 (預設: %(default)s)')
     parser.add_argument('--height', type=int, default=IMAGE_DEFAULTS.height, help='輸出影像高度 (預設: %(default)s)')
     parser.add_argument('--color-mode', choices=('gray', 'bgr'), default=IMAGE_DEFAULTS.color_mode, help='影像編碼顏色模式 (預設: %(default)s)')
+    parser.add_argument('--codec', choices=('h264', 'h265'), default=IMAGE_DEFAULTS.codec, help='選擇影像編碼器 (預設: %(default)s)')
     parser.add_argument('--interval', type=float, default=IMAGE_DEFAULTS.transmit_interval, help='幀與幀之間的最小秒數 (預設: %(default)s)')
     parser.add_argument('--camera-fps', type=float, default=None, help='嘗試設定攝影機的擷取 FPS (<=0 表示維持裝置預設)')
     parser.add_argument('--serial-timeout', type=float, default=DEFAULT_SERIAL_TIMEOUT, help='序列埠 timeout 秒數 (預設: %(default)s)')
@@ -151,6 +154,7 @@ def main() -> None:
                 bitrate=args.bitrate,
                 keyframe_interval=args.keyframe_interval,
                 color_conversion=color_conversion(args.color_mode),
+                codec=args.codec,
             ),
             fps=fps_hint,
         )

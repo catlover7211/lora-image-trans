@@ -43,6 +43,7 @@ def main() -> None:
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")
 
     last_error_reported: Optional[str] = None
+    current_codec: Optional[str] = None
 
     try:
         while True:
@@ -64,6 +65,10 @@ def main() -> None:
                 pending_stats.clear()
                 pending_fragments = 0
                 continue
+
+            if chunk.is_config and chunk.codec != current_codec:
+                current_codec = chunk.codec
+                print(f"收到編碼器設定: {current_codec.upper()} (extradata {len(chunk.data)} bytes)")
 
             decoded_frames = list(decoder.decode(chunk))
 
