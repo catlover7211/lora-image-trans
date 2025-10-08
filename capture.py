@@ -58,12 +58,15 @@ class EncoderConfig:
 class TransmissionConfig:
     interval: float = IMAGE_DEFAULTS.transmit_interval
     buffer_size: int = IMAGE_DEFAULTS.tx_buffer_size
+    use_ack: bool = IMAGE_DEFAULTS.use_chunk_ack
 
     def __post_init__(self) -> None:
         if self.interval < 0:
             raise ValueError('傳輸間隔不得為負數。')
         if self.buffer_size <= 0:
             raise ValueError('緩衝區容量必須為正整數。')
+        if not isinstance(self.use_ack, bool):
+            raise ValueError('use_ack 必須為布林值。')
 
 
 class FrameEncoder:
@@ -149,6 +152,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--wavelet-levels', type=int, default=IMAGE_DEFAULTS.wavelet_levels, help='Wavelet 轉換層數 (僅 wavelet 編碼器使用，預設: %(default)s)')
     parser.add_argument('--wavelet-quant', type=int, default=IMAGE_DEFAULTS.wavelet_quant, help='Wavelet 量化步階 (僅 wavelet 編碼器使用，預設: %(default)s)')
     parser.add_argument('--tx-buffer', type=int, default=IMAGE_DEFAULTS.tx_buffer_size, help='傳送端待發緩衝區容量 (幀數，預設: %(default)s)')
+    parser.add_argument('--no-ack', action='store_true', help='停用 chunk 級 ACK（可能降低可靠度，但可減少等待時間）')
     return parser.parse_args()
 
 
@@ -204,6 +208,7 @@ def main() -> None:
         transmitter_config = TransmissionConfig(
             interval=max(args.interval, 0.0),
             buffer_size=max(args.tx_buffer, 1),
+            use_ack=not args.no_ack,
         )
     except ValueError as exc:
         print(f'無效的傳輸參數: {exc}')
@@ -226,7 +231,7 @@ def main() -> None:
         return
 
     protocol = FrameProtocol(
-        use_chunk_ack=True,
+        use_chunk_ack=transmitter_config.use_ack,
         ack_timeout=max(args.serial_timeout, 0.0),
         initial_skip_acks=1,
     )
@@ -358,9 +363,19 @@ def main() -> None:
             try:
                 tx_queue.put_nowait(job)
             except queue.Full:
+                try:
+                    tx_queue.get_nowait()
+                    tx_queue.task_done()
+                except queue.Empty:
+                    pass
+                try:
+                    tx_queue.put_nowait(job)
+                except queue.Full:
+                    dropped_jobs += 1
+                    print(f'警告: 傳送緩衝區已滿，無法加入最新幀 (累積捨棄: {dropped_jobs})')
+                    continue
                 dropped_jobs += 1
-                print(f'警告: 傳送緩衝區已滿，捨棄本幀 (累積捨棄: {dropped_jobs})')
-                continue
+                print(f'警告: 傳送緩衝區已滿，已捨棄最舊幀以插入新幀 (累積捨棄: {dropped_jobs})')
 
             last_sent_time = time.monotonic()
 

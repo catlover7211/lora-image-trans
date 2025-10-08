@@ -1,3 +1,4 @@
+import argparse
 import queue
 import threading
 import time
@@ -12,7 +13,14 @@ from protocol import BAUD_RATE, FrameProtocol, FrameStats, auto_detect_serial_po
 
 MAX_PAYLOAD_SIZE = 1920 * 1080  # 允許的最大影像資料大小（反填充後）
 WINDOW_TITLE = 'Received CCTV (Press q to quit)'
-RECEIVE_QUEUE_SIZE = DEFAULT_IMAGE_SETTINGS.rx_buffer_size
+DEFAULT_RX_BUFFER = DEFAULT_IMAGE_SETTINGS.rx_buffer_size
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description='Receive CCTV frames over serial and display them.')
+    parser.add_argument('--no-ack', action='store_true', help='停用 chunk 級 ACK。與傳送端設定一致才有作用。')
+    parser.add_argument('--rx-buffer', type=int, default=DEFAULT_RX_BUFFER, help='接收端佇列容量 (幀數，預設: %(default)s)')
+    return parser.parse_args()
 
 
 def open_serial_connection() -> Optional[serial.Serial]:
@@ -36,14 +44,19 @@ def open_serial_connection() -> Optional[serial.Serial]:
 
 def main() -> None:
     """主函式，用於從序列埠接收、解碼並顯示影像。"""
+    args = parse_args()
     ser = open_serial_connection()
     if ser is None:
         return
 
-    protocol = FrameProtocol(max_payload_size=MAX_PAYLOAD_SIZE, use_chunk_ack=True)
+    protocol = FrameProtocol(
+        max_payload_size=MAX_PAYLOAD_SIZE,
+        use_chunk_ack=not args.no_ack,
+    )
     decoder = H264Decoder()
 
-    frame_queue: "queue.Queue[tuple[EncodedChunk, FrameStats]]" = queue.Queue(maxsize=RECEIVE_QUEUE_SIZE)
+    rx_buffer_size = max(1, args.rx_buffer)
+    frame_queue: "queue.Queue[tuple[EncodedChunk, FrameStats]]" = queue.Queue(maxsize=rx_buffer_size)
     stop_event = threading.Event()
     pending_stats: list[FrameStats] = []
     pending_fragments = 0
@@ -86,8 +99,19 @@ def main() -> None:
                     frame_queue.put((chunk, framed.stats), timeout=0.1)
                     break
                 except queue.Full:
+                    try:
+                        frame_queue.get_nowait()
+                        frame_queue.task_done()
+                    except queue.Empty:
+                        pass
+                    try:
+                        frame_queue.put_nowait((chunk, framed.stats))
+                    except queue.Full:
+                        dropped_chunks += 1
+                        print(f"警告: 接收緩衝區已滿，無法加入最新片段 (累積捨棄: {dropped_chunks})")
+                        break
                     dropped_chunks += 1
-                    print(f"警告: 接收緩衝區已滿，捨棄最新片段 (累積捨棄: {dropped_chunks})")
+                    print(f"警告: 接收緩衝區已滿，已捨棄最舊片段以插入新片段 (累積捨棄: {dropped_chunks})")
                     break
 
     receiver_thread = threading.Thread(target=receiver_worker, name="LoRaReceiver", daemon=True)
