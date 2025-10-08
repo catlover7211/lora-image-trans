@@ -1,12 +1,18 @@
-import cv2
-import serial
+import queue
+import threading
+import time
 from typing import Optional
 
+import cv2
+import serial
+
 from h264_codec import EncodedChunk, H264Decoder
+from image_settings import DEFAULT_IMAGE_SETTINGS
 from protocol import BAUD_RATE, FrameProtocol, FrameStats, auto_detect_serial_port
 
 MAX_PAYLOAD_SIZE = 1920 * 1080  # 允許的最大影像資料大小（反填充後）
 WINDOW_TITLE = 'Received CCTV (Press q to quit)'
+RECEIVE_QUEUE_SIZE = DEFAULT_IMAGE_SETTINGS.rx_buffer_size
 
 
 def open_serial_connection() -> Optional[serial.Serial]:
@@ -36,47 +42,81 @@ def main() -> None:
 
     protocol = FrameProtocol(max_payload_size=MAX_PAYLOAD_SIZE, use_chunk_ack=True)
     decoder = H264Decoder()
+
+    frame_queue: "queue.Queue[tuple[EncodedChunk, FrameStats]]" = queue.Queue(maxsize=RECEIVE_QUEUE_SIZE)
+    stop_event = threading.Event()
     pending_stats: list[FrameStats] = []
     pending_fragments = 0
 
     print("已連接序列埠，開始等待接收影像...")
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")
 
-    last_error_reported: Optional[str] = None
     current_codec: Optional[str] = None
+    dropped_chunks = 0
+    last_error_reported: Optional[str] = None
 
-    try:
-        while True:
-            framed = protocol.receive_frame(ser, block=True)
+    def receiver_worker() -> None:
+        nonlocal last_error_reported, dropped_chunks
+        while not stop_event.is_set():
+            try:
+                framed = protocol.receive_frame(ser, block=False)
+            except serial.SerialException as exc:
+                if not stop_event.is_set():
+                    print(f"接收錯誤: {exc}")
+                time.sleep(0.1)
+                continue
+
             if framed is None:
                 error = protocol.last_error
                 if error and error != last_error_reported:
                     print(f"接收失敗: {error}")
                     last_error_reported = error
+                time.sleep(0.005)
                 continue
 
-            pending_stats.append(framed.stats)
-            pending_fragments += 1
-
+            last_error_reported = None
             try:
                 chunk = EncodedChunk.from_payload(framed.payload)
             except ValueError as exc:
                 print(f"接收失敗: {exc}")
-                pending_stats.clear()
-                pending_fragments = 0
                 continue
 
-            if chunk.is_config and chunk.codec != current_codec:
-                current_codec = chunk.codec
-                print(f"收到編碼器設定: {current_codec.upper()} (extradata {len(chunk.data)} bytes)")
+            while not stop_event.is_set():
+                try:
+                    frame_queue.put((chunk, framed.stats), timeout=0.1)
+                    break
+                except queue.Full:
+                    dropped_chunks += 1
+                    print(f"警告: 接收緩衝區已滿，捨棄最新片段 (累積捨棄: {dropped_chunks})")
+                    break
 
+    receiver_thread = threading.Thread(target=receiver_worker, name="LoRaReceiver", daemon=True)
+    receiver_thread.start()
+
+    try:
+        while not stop_event.is_set():
             try:
+                chunk, stats = frame_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+
+            decoded_frames: list = []
+            try:
+                pending_stats.append(stats)
+                pending_fragments += 1
+
+                if chunk.is_config and chunk.codec != current_codec:
+                    current_codec = chunk.codec
+                    print(f"收到編碼器設定: {current_codec.upper()} (extradata {len(chunk.data)} bytes)")
+
                 decoded_frames = list(decoder.decode(chunk))
             except RuntimeError as exc:
                 print(f"解碼失敗: {exc}")
                 pending_stats.clear()
                 pending_fragments = 0
                 continue
+            finally:
+                frame_queue.task_done()
 
             if not decoded_frames:
                 continue
@@ -93,20 +133,21 @@ def main() -> None:
                 continue
 
             print(
-                f"成功接收並解碼一幀影像，封包大小: {total_payload} bytes, "
+                f"封包大小: {total_payload} bytes, "
                 f"ASCII 編碼大小: {total_ascii} bytes, 分片數: {fragment_count}"
             )
 
-            last_error_reported = None
-
             cv2.imshow(WINDOW_TITLE, image)
             if cv2.waitKey(1) & 0xFF == ord('q'):
+                stop_event.set()
                 break
 
     except KeyboardInterrupt:
         print("\n程式被使用者中斷。")
     finally:
         print("正在關閉程式並釋放資源...")
+        stop_event.set()
+        receiver_thread.join(timeout=2)
         cv2.destroyAllWindows()
         ser.close()
         print("程式已關閉。")

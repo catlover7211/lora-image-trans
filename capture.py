@@ -1,4 +1,6 @@
 import argparse
+import queue
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Optional, cast
@@ -17,6 +19,15 @@ DEFAULT_CAMERA_INDEX = 0
 DEFAULT_SERIAL_TIMEOUT = 1.0
 WINDOW_TITLE = 'CCTV Preview (Press q to quit)'
 MIN_USEFUL_PAYLOAD = 64  # bytes; skip extremely tiny predict-only frames to避免灰畫面
+
+
+@dataclass
+class TransmissionJob:
+    payloads: list[bytes]
+    raw_size: int
+    encoded_size: int
+    contains_config: bool
+    keyframe: bool
 
 
 @dataclass(frozen=True)
@@ -46,10 +57,13 @@ class EncoderConfig:
 @dataclass(frozen=True)
 class TransmissionConfig:
     interval: float = IMAGE_DEFAULTS.transmit_interval
+    buffer_size: int = IMAGE_DEFAULTS.tx_buffer_size
 
     def __post_init__(self) -> None:
         if self.interval < 0:
             raise ValueError('傳輸間隔不得為負數。')
+        if self.buffer_size <= 0:
+            raise ValueError('緩衝區容量必須為正整數。')
 
 
 class FrameEncoder:
@@ -134,6 +148,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--max-idle', type=float, default=IMAGE_DEFAULTS.max_idle_seconds, help='允許最長未送出秒數，超過則強制送一幀 (<=0 表示不限，預設: %(default)s)')
     parser.add_argument('--wavelet-levels', type=int, default=IMAGE_DEFAULTS.wavelet_levels, help='Wavelet 轉換層數 (僅 wavelet 編碼器使用，預設: %(default)s)')
     parser.add_argument('--wavelet-quant', type=int, default=IMAGE_DEFAULTS.wavelet_quant, help='Wavelet 量化步階 (僅 wavelet 編碼器使用，預設: %(default)s)')
+    parser.add_argument('--tx-buffer', type=int, default=IMAGE_DEFAULTS.tx_buffer_size, help='傳送端待發緩衝區容量 (幀數，預設: %(default)s)')
     return parser.parse_args()
 
 
@@ -186,7 +201,10 @@ def main() -> None:
         return
 
     try:
-        transmitter_config = TransmissionConfig(interval=max(args.interval, 0.0))
+        transmitter_config = TransmissionConfig(
+            interval=max(args.interval, 0.0),
+            buffer_size=max(args.tx_buffer, 1),
+        )
     except ValueError as exc:
         print(f'無效的傳輸參數: {exc}')
         return
@@ -214,20 +232,63 @@ def main() -> None:
     )
     transmitter = FrameTransmitter(ser, protocol=protocol, config=transmitter_config)
 
+    tx_queue: "queue.Queue[Optional[TransmissionJob]]" = queue.Queue(maxsize=transmitter_config.buffer_size)
+    stop_event = threading.Event()
+    send_errors: list[Exception] = []
+
+    def sender_worker() -> None:
+        frames_sent = 0
+        loop_start = time.monotonic()
+        codec_label = encoder.codec_name.upper()
+        while not stop_event.is_set():
+            try:
+                job = tx_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if job is None:
+                tx_queue.task_done()
+                break
+            ascii_size = 0
+            chunks_sent = 0
+            try:
+                for payload in job.payloads:
+                    stats = transmitter.send(payload)
+                    ascii_size += stats.stuffed_size
+                    chunks_sent += 1
+            except (serial.SerialException, TimeoutError) as exc:
+                send_errors.append(exc)
+                print(f'序列埠寫入錯誤: {exc}')
+                stop_event.set()
+                break
+            else:
+                frames_sent += 1
+                elapsed = time.monotonic() - loop_start
+                fps = frames_sent / elapsed if elapsed > 0 else 0.0
+                print(
+                    f'成功傳送一幀影像，原始估計大小: {job.raw_size} bytes, '
+                    f'{codec_label} 編碼大小: {job.encoded_size} bytes, ASCII 編碼大小: {ascii_size} bytes, '
+                    f'分片數: {chunks_sent}, 是否關鍵幀: {"是" if job.keyframe else "否"}, '
+                    f'佇列佔用: {tx_queue.qsize()}/{tx_queue.maxsize}, 平均頻率: {fps:.2f} fps'
+                )
+            finally:
+                tx_queue.task_done()
+
+    sender_thread = threading.Thread(target=sender_worker, name='LoRaSender', daemon=True)
+    sender_thread.start()
+
     print('攝影機已啟動，開始擷取與傳送影像...')
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")
 
-    frame_counter = 0
-    codec_label = args.codec.upper()
-    loop_start = time.monotonic()
     motion_threshold = args.motion_threshold
     max_idle = max(args.max_idle, 0.0)
     previous_gray: Optional[np.ndarray] = None
     skipped_frames = 0
+    dropped_jobs = 0
     last_sent_time = time.monotonic()
+    current_gray: Optional[np.ndarray] = None
 
     try:
-        while True:
+        while not stop_event.is_set():
             ret, frame = cap.read()
             if not ret:
                 print('錯誤: 無法讀取影像幀。')
@@ -242,6 +303,13 @@ def main() -> None:
             if not chunks:
                 continue
 
+            current_gray = preview_frame
+            if isinstance(current_gray, np.ndarray) and current_gray.ndim == 3:
+                current_gray = cv2.cvtColor(current_gray, cv2.COLOR_BGR2GRAY)
+
+            if isinstance(current_gray, np.ndarray):
+                current_gray = current_gray.astype(np.uint8)
+
             contains_config = any(chunk.is_config for chunk in chunks)
             non_config_bytes = sum(len(chunk.data) for chunk in chunks if not chunk.is_config)
             if (
@@ -255,12 +323,8 @@ def main() -> None:
                     previous_gray = current_gray
                 continue
 
-            current_gray = preview_frame
-            if isinstance(current_gray, np.ndarray) and current_gray.ndim == 3:
-                current_gray = cv2.cvtColor(current_gray, cv2.COLOR_BGR2GRAY)
-
-            if isinstance(current_gray, np.ndarray):
-                current_gray = current_gray.astype(np.uint8)
+            now = time.monotonic()
+            keyframe_sent = any(chunk.is_keyframe for chunk in chunks)
 
             now = time.monotonic()
             if (
@@ -281,49 +345,47 @@ def main() -> None:
             if isinstance(current_gray, np.ndarray):
                 previous_gray = current_gray
 
-            encoded_size = 0
-            framed_size = 0
-            ascii_size = 0
-            chunks_sent = 0
-            keyframe_sent = False
-
-            try:
-                for chunk in chunks:
-                    payload = chunk.to_payload()
-                    encoded_size += len(chunk.data)
-                    framed_size += len(payload)
-                    stats = transmitter.send(payload)
-                    ascii_size += stats.stuffed_size
-                    chunks_sent += 1
-                    last_sent_time = time.monotonic()
-                    keyframe_sent = keyframe_sent or chunk.is_keyframe
-            except (serial.SerialException, TimeoutError) as exc:
-                print(f'序列埠寫入錯誤: {exc}')
-                break
-
-            frame_counter += 1
-            elapsed = time.monotonic() - loop_start
-            fps = frame_counter / elapsed if elapsed > 0 else 0.0
-            print(
-                f'成功傳送一幀影像，原始估計大小: {raw_size} bytes, '
-                f'{codec_label} 編碼大小: {encoded_size} bytes, 封裝後大小: {framed_size} bytes, '
-                f'ASCII 編碼大小: {ascii_size} bytes, 分片數: {chunks_sent}, '
-                f'是否關鍵幀: {"是" if keyframe_sent else "否"}, '
-                f'跳過累積: {skipped_frames}, 平均頻率: {fps:.2f} fps'
+            payloads = [chunk.to_payload() for chunk in chunks]
+            encoded_size = sum(len(chunk.data) for chunk in chunks)
+            job = TransmissionJob(
+                payloads=payloads,
+                raw_size=raw_size,
+                encoded_size=encoded_size,
+                contains_config=contains_config,
+                keyframe=keyframe_sent,
             )
 
-            #cv2.imshow(WINDOW_TITLE, preview_frame)
-            #if cv2.waitKey(1) & 0xFF == ord('q'):
-            #    break
+            try:
+                tx_queue.put_nowait(job)
+            except queue.Full:
+                dropped_jobs += 1
+                print(f'警告: 傳送緩衝區已滿，捨棄本幀 (累積捨棄: {dropped_jobs})')
+                continue
+
+            last_sent_time = time.monotonic()
 
     except KeyboardInterrupt:
         print('\n程式被使用者中斷。')
     finally:
         print('正在關閉程式並釋放資源...')
+        stop_event.set()
+        try:
+            tx_queue.put_nowait(None)
+        except queue.Full:
+            try:
+                tx_queue.get_nowait()
+                tx_queue.task_done()
+            except queue.Empty:
+                pass
+            tx_queue.put_nowait(None)
+        sender_thread.join(timeout=2)
         cap.release()
         cv2.destroyAllWindows()
         ser.close()
         print('程式已關閉。')
+
+        if send_errors:
+            print('注意: 傳輸執行緒曾發生錯誤，請檢查上述訊息。')
 
 
 if __name__ == '__main__':

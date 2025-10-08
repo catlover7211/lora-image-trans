@@ -47,6 +47,12 @@ class ImageSettings:
     wavelet_quant: int = 40
     """Wavelet 係數量化步階（僅 wavelet 編碼器使用），40 約可將單幀 payload 控制在 10 KB 內。"""
 
+    tx_buffer_size: int = 8
+    """傳送端待發緩衝區容量（以幀為單位）。預設 8 幀可吸收暫時的串列埠延遲。"""
+
+    rx_buffer_size: int = 32
+    """接收端待顯示緩衝區容量。32 幀可避免主程式顯示延遲阻塞解碼。"""
+
 
 DEFAULT_IMAGE_SETTINGS = ImageSettings()
 """提供給應用程式載入的預設參數實例。"""
