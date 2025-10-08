@@ -18,6 +18,7 @@ BAUD_RATE = 115_200
 START_OF_FRAME = b"\x01"  # SOH
 END_OF_FRAME = b"\x04"  # EOT
 ESC = b"\x1B"  # ESC (escape)
+ACK_MESSAGE = b"ACK"  # Acknowledgement message
 HEADER_FORMAT = ">II"  # stuffed_size, crc32 (payload)
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 DEFAULT_CHUNK_SIZE = 128
@@ -113,7 +114,7 @@ def auto_detect_serial_port() -> Optional[str]:
 # ---------------------------------------------------------------------------
 @runtime_checkable
 class SerialLike(Protocol):
-    def write(self, data: bytes) -> int: ...
+    def write(self, data: bytes) -> int | None: ...
 
     def read(self, size: int = ...) -> bytes: ...
 
@@ -162,6 +163,15 @@ class FrameProtocol:
                 time.sleep(self.inter_chunk_delay)
         ser.flush()
         return stats
+
+    def wait_for_ack(self, ser: SerialLike, timeout: float = 1.0) -> bool:
+        """Wait for an ACK message from the receiver."""
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            data = ser.read(len(ACK_MESSAGE))
+            if data == ACK_MESSAGE:
+                return True
+        return False
 
     # -------------------------- Decoding helpers --------------------------
     def receive_frame(self, ser: SerialLike, *, block: bool = True) -> Optional[Frame]:
@@ -213,6 +223,9 @@ class FrameProtocol:
             stuffed_size=len(stuffed_payload),
             crc=crc,
         )
+        # Send ACK upon successful reception
+        ser.write(ACK_MESSAGE)
+        ser.flush()
         return Frame(payload=payload, stats=stats)
 
     # -------------------------- Internal helpers --------------------------

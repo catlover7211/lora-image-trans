@@ -76,6 +76,9 @@ class FrameTransmitter:
                 time.sleep(remaining)
         stats = self.protocol.send_frame(self.serial_port, payload)
         self._last_sent = time.monotonic()
+        # Wait for ACK
+        if not self.protocol.wait_for_ack(self.serial_port, timeout=2.0):
+            raise ValueError("No ACK received from receiver")
         return stats
 
 
