@@ -113,8 +113,6 @@ def auto_detect_serial_port() -> Optional[str]:
 # ---------------------------------------------------------------------------
 @runtime_checkable
 class SerialLike(Protocol):
-    timeout: Optional[float]
-
     def write(self, data: bytes) -> int: ...
 
     def read(self, size: int = ...) -> bytes: ...
