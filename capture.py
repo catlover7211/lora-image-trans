@@ -104,6 +104,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--height', type=int, default=IMAGE_DEFAULTS.height, help='輸出影像高度 (預設: %(default)s)')
     parser.add_argument('--color-mode', choices=('gray', 'bgr'), default=IMAGE_DEFAULTS.color_mode, help='影像編碼顏色模式 (預設: %(default)s)')
     parser.add_argument('--interval', type=float, default=IMAGE_DEFAULTS.transmit_interval, help='幀與幀之間的最小秒數 (預設: %(default)s)')
+    parser.add_argument('--camera-fps', type=float, default=None, help='嘗試設定攝影機的擷取 FPS (<=0 表示維持裝置預設)')
     parser.add_argument('--serial-timeout', type=float, default=DEFAULT_SERIAL_TIMEOUT, help='序列埠 timeout 秒數 (預設: %(default)s)')
     parser.add_argument('--bitrate', type=int, default=IMAGE_DEFAULTS.target_bitrate, help='H.264 目標位元率 (bps，預設: %(default)s)')
     parser.add_argument('--keyframe-interval', type=int, default=IMAGE_DEFAULTS.keyframe_interval, help='關鍵幀間隔 (預設: %(default)s)')
@@ -135,9 +136,12 @@ def main() -> None:
     """主流程：擷取影像、編碼並透過序列埠傳送。"""
     args = parse_args()
 
+    capture_fps = args.camera_fps if args.camera_fps and args.camera_fps > 0 else None
     fps_hint = 30.0
     if args.interval > 0:
-        fps_hint = max(1.0, 1.0 / args.interval)
+        fps_hint = max(fps_hint, 1.0 / args.interval)
+    if capture_fps:
+        fps_hint = max(fps_hint, capture_fps)
 
     try:
         encoder = FrameEncoder(
@@ -165,6 +169,12 @@ def main() -> None:
         return
 
     cap = cv2.VideoCapture(args.camera_index)
+    if capture_fps:
+        if not cap.set(cv2.CAP_PROP_FPS, capture_fps):
+            print(f'警告: 無法將攝影機 FPS 設為 {capture_fps}，將採用裝置預設值。')
+        else:
+            actual_fps = cap.get(cv2.CAP_PROP_FPS)
+            print(f'攝影機 FPS 目標: {capture_fps}，裝置回報: {actual_fps:.2f}')
     if not cap.isOpened():
         print('錯誤: 無法打開攝影機。請確認攝影機已連接且驅動正常。')
         ser.close()
