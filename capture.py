@@ -90,10 +90,8 @@ class FrameTransmitter:
                 return stats
             except AckTimeoutError as exc:
                 last_error = exc
-                print(f"警告: 未收到 ACK，重試 {attempt + 1}/{max_retries + 1}")
             except serial.SerialException as exc:
                 last_error = exc
-                print(f"序列埠發送錯誤: {exc}，重試 {attempt + 1}/{max_retries + 1}")
 
             time.sleep(0.1)
 
