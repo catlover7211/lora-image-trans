@@ -109,6 +109,7 @@ class FrameProtocol:
         self.use_chunk_ack = use_chunk_ack
         self.ack_timeout = max(0.0, ack_timeout)
         self._acks_to_skip = max(0, initial_skip_acks)
+        self._ack_established = False
         self._last_error: Optional[str] = None
 
     # -------------------------- Encoding helpers --------------------------
@@ -141,8 +142,15 @@ class FrameProtocol:
             if self._acks_to_skip > 0:
                 self._acks_to_skip -= 1
                 continue
-            if not self._wait_for_ack(ser):
-                raise TimeoutError("等待 ACK 時間逾時")
+            if self._wait_for_ack(ser):
+                self._ack_established = True
+                continue
+            if not self._ack_established:
+                # 尚未建立 ACK 聯繫，降級為無 ACK 模式避免阻塞
+                self.use_chunk_ack = False
+                self._last_error = "尚未收到 ACK，已降級為無 ACK 模式"
+                continue
+            raise TimeoutError("等待 ACK 時間逾時")
         ser.flush()
         return stats
 

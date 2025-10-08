@@ -164,6 +164,42 @@ class FrameProtocolTest(unittest.TestCase):
         assert frame
         self.assertEqual(frame.payload, payload)
         self.assertEqual(frame.stats.crc, stats.crc)
+        self.assertTrue(sender_protocol.use_chunk_ack)
+
+    def test_chunk_ack_fallback_when_missing(self) -> None:
+        sender_ser, receiver_ser = create_full_duplex_pair()
+        sender_protocol = FrameProtocol(
+            inter_chunk_delay=0,
+            chunk_size=16,
+            use_chunk_ack=True,
+            ack_timeout=0.1,
+            initial_skip_acks=1,
+        )
+        # Receiver不會回傳 ACK
+        receiver_protocol = FrameProtocol(
+            inter_chunk_delay=0,
+            chunk_size=16,
+            use_chunk_ack=False,
+        )
+
+        payload = bytes(range(32))
+        received_frame: dict[str, Optional[Frame]] = {"frame": None}
+
+        def receiver_task() -> None:
+            received_frame["frame"] = receiver_protocol.receive_frame(receiver_ser, block=True)
+
+        thread = threading.Thread(target=receiver_task)
+        thread.start()
+        stats = sender_protocol.send_frame(sender_ser, payload)
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive(), "接收執行緒未正常結束")
+        frame = received_frame["frame"]
+        self.assertIsNotNone(frame)
+        assert frame
+        self.assertEqual(frame.payload, payload)
+        self.assertEqual(frame.stats.crc, stats.crc)
+        self.assertFalse(sender_protocol.use_chunk_ack)
+        self.assertEqual(sender_protocol.last_error, "尚未收到 ACK，已降級為無 ACK 模式")
 
 
 if __name__ == "__main__":
