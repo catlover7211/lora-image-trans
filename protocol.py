@@ -18,20 +18,12 @@ BAUD_RATE = 115_200
 START_OF_FRAME = b"\x01"  # SOH
 END_OF_FRAME = b"\x04"  # EOT
 ESC = b"\x1B"  # ESC (escape)
-ACK_MESSAGE = b"ACK"  # Acknowledgement message
 HEADER_FORMAT = ">II"  # stuffed_size, crc32 (payload)
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 DEFAULT_CHUNK_SIZE = 128
 DEFAULT_INTER_CHUNK_DELAY = 0.001  # seconds
 DEFAULT_MAX_STUFFED_SIZE = 256 * 1024  # 256 KB
 DEFAULT_MAX_PAYLOAD_SIZE = 128 * 1024  # 128 KB (post unstuff)
-DEFAULT_ACK_TIMEOUT = 1.0
-
-
-class AckTimeoutError(RuntimeError):
-    """Raised when an expected ACK message is not received within timeout."""
-
-    pass
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +113,7 @@ def auto_detect_serial_port() -> Optional[str]:
 # ---------------------------------------------------------------------------
 @runtime_checkable
 class SerialLike(Protocol):
-    def write(self, data) -> int | None: ...
+    def write(self, data, /) -> int | None: ...
 
     def read(self, size: int = ...) -> bytes: ...
 
@@ -138,7 +130,6 @@ class FrameProtocol:
         inter_chunk_delay: float = DEFAULT_INTER_CHUNK_DELAY,
         max_stuffed_size: int = DEFAULT_MAX_STUFFED_SIZE,
         max_payload_size: int = DEFAULT_MAX_PAYLOAD_SIZE,
-        ack_timeout: float = DEFAULT_ACK_TIMEOUT,
     ) -> None:
         if chunk_size <= 0:
             raise ValueError("chunk_size 必須為正整數")
@@ -146,16 +137,16 @@ class FrameProtocol:
         self.inter_chunk_delay = max(inter_chunk_delay, 0.0)
         self.max_stuffed_size = max_stuffed_size
         self.max_payload_size = max_payload_size
-        self.ack_timeout = max(ack_timeout, 0.0)
 
     # -------------------------- Encoding helpers --------------------------
-    def build_frame(self, payload: bytes) -> tuple[bytes, bytes, FrameStats]:
-        """Construct the header, stuffed payload, and statistics for *payload*."""
+    def build_frame(self, payload: bytes) -> tuple[bytes, FrameStats]:
+        """Construct the framed byte stream and statistics for *payload*."""
         stuffed = stuff_bytes(payload)
         crc = zlib.crc32(payload) & 0xFFFFFFFF
         header = struct.pack(HEADER_FORMAT, len(stuffed), crc)
+        frame = START_OF_FRAME + header + stuffed + END_OF_FRAME
         stats = FrameStats(payload_size=len(payload), stuffed_size=len(stuffed), crc=crc)
-        return header, stuffed, stats
+        return frame, stats
 
     def iter_chunks(self, frame: bytes) -> Iterable[bytes]:
         """Split a frame into chunks suitable for streaming over the serial port."""
@@ -164,49 +155,13 @@ class FrameProtocol:
 
     def send_frame(self, ser: SerialLike, payload: bytes) -> FrameStats:
         """Send *payload* through the provided serial connection with ACK flow control."""
-        header, stuffed_payload, stats = self.build_frame(payload)
-
-        # Send frame start and header without requiring ACK
-        ser.write(START_OF_FRAME)
-        ser.write(header)
-        ser.flush()
-
-        # Send stuffed payload chunk by chunk, waiting for ACK after each chunk if configured
-        offset = 0
-        stuffed_length = len(stuffed_payload)
-        while offset < stuffed_length:
-            chunk = stuffed_payload[offset: offset + self.chunk_size]
+        frame, stats = self.build_frame(payload)
+        for chunk in self.iter_chunks(frame):
             ser.write(chunk)
-            ser.flush()
-
-            if self.ack_timeout > 0:
-                if not self.wait_for_ack(ser, timeout=self.ack_timeout):
-                    raise AckTimeoutError("等待 ACK 超時")
-
             if self.inter_chunk_delay:
                 time.sleep(self.inter_chunk_delay)
-
-            offset += len(chunk)
-
-        # Send frame end marker
-        ser.write(END_OF_FRAME)
         ser.flush()
         return stats
-
-    def wait_for_ack(self, ser: SerialLike, timeout: Optional[float] = None) -> bool:
-        """Wait for an ACK message from the receiver."""
-        effective_timeout = self.ack_timeout if timeout is None else max(timeout, 0.0)
-        if effective_timeout <= 0:
-            return True
-
-        deadline = time.time() + effective_timeout
-        while time.time() < deadline:
-            data = ser.read(len(ACK_MESSAGE))
-            if data == ACK_MESSAGE:
-                return True
-            if not data:
-                continue
-        return False
 
     # -------------------------- Decoding helpers --------------------------
     def receive_frame(self, ser: SerialLike, *, block: bool = True) -> Optional[Frame]:
@@ -235,20 +190,9 @@ class FrameProtocol:
             self._discard_until_end(ser)
             return None
 
-        stuffed_payload = bytearray()
-        remaining = stuffed_size
-        while remaining > 0:
-            expected_size = min(self.chunk_size, remaining)
-            chunk = self._read_exact(ser, expected_size, block=True)
-            if chunk is None or len(chunk) != expected_size:
-                return None
-
-            stuffed_payload.extend(chunk)
-            remaining -= expected_size
-
-            if self.ack_timeout > 0:
-                ser.write(ACK_MESSAGE)
-                ser.flush()
+        stuffed_payload = self._read_exact(ser, stuffed_size, block=True)
+        if stuffed_payload is None:
+            return None
 
         end_marker = self._read_exact(ser, len(END_OF_FRAME), block=True)
         if end_marker != END_OF_FRAME:
@@ -256,7 +200,7 @@ class FrameProtocol:
             self._discard_until_end(ser)
             return None
 
-        payload = unstuff_bytes(bytes(stuffed_payload))
+        payload = unstuff_bytes(stuffed_payload)
         if not payload or len(payload) > self.max_payload_size:
             return None
 
