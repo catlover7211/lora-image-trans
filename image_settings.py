@@ -19,7 +19,7 @@ class ImageSettings:
     height: int = 90
     """輸出影像高度（像素）。"""
 
-    target_bitrate: int = 300_000
+    target_bitrate: int = 150_000
     """H.264 目標位元率（每秒位元數），數值越低代表資料量越小。"""
 
     keyframe_interval: int = 1
@@ -28,7 +28,7 @@ class ImageSettings:
     motion_threshold: float = 2.0
     """平均灰階差異門檻（0-255）。低於該值視為無顯著變化，可跳過傳送。"""
 
-    max_idle_seconds: float = 2.0
+    max_idle_seconds: float = 10.0
     """允許最長無傳輸的時間（秒）。超過後即使無變化也會強制送出一幀。"""
 
     transmit_interval: float = 10.0
