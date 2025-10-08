@@ -38,7 +38,7 @@ class ImageSettings:
     color_mode: ColorMode = "gray"
     """預設採用灰階輸出，可改為 'bgr' 取得彩色畫面。"""
 
-    codec: VideoCodec = "h265"
+    codec: VideoCodec = 'h265'
     """影像編碼器類型。'h265' (HEVC) 提供更佳壓縮效率，但計算量較高，必要時可改回 'h264'。"""
 
 
