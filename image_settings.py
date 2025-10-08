@@ -38,7 +38,7 @@ class ImageSettings:
     color_mode: ColorMode = "gray"
     """預設採用灰階輸出，可改為 'bgr' 取得彩色畫面。"""
 
-    codec: VideoCodec = 'av1'
+    codec: VideoCodec = 'h264'
     """影像編碼器類型。另支援 'av1' 取得更高壓縮率（但需相容的 FFmpeg/硬體）。"""
 
 
