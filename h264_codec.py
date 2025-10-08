@@ -382,6 +382,10 @@ class WaveletEncoder:
         # All frames are intra-only; nothing to do.
         return
 
+    def force_config_repeat(self, count: int = 3) -> None:
+        # Wavelet 編碼為每幀獨立，不需要額外的設定封包。
+        return
+
 
 class WaveletDecoder:
     """Inverse transform for the custom YCoCg + wavelet encoder."""
