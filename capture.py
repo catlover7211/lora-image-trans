@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import cv2
+import numpy as np
 import serial
 
 from h264_codec import EncodedChunk, H264Encoder
@@ -12,7 +13,10 @@ from protocol import BAUD_RATE, FrameProtocol, FrameStats, auto_detect_serial_po
 
 DEFAULT_FRAME_WIDTH = 160
 DEFAULT_FRAME_HEIGHT = 90
-DEFAULT_JPEG_QUALITY = 5
+DEFAULT_BANDWIDTH_BITRATE = 300_000
+DEFAULT_KEYFRAME_INTERVAL = 60
+DEFAULT_MOTION_THRESHOLD = 2.0  # 平均灰階差異 (0-255)
+DEFAULT_MAX_IDLE_SECONDS = 2.0
 DEFAULT_TRANSMIT_INTERVAL = 10.0
 DEFAULT_CAMERA_INDEX = 0
 DEFAULT_SERIAL_TIMEOUT = 1.0
@@ -23,14 +27,17 @@ WINDOW_TITLE = 'CCTV Preview (Press q to quit)'
 class EncoderConfig:
     width: int = DEFAULT_FRAME_WIDTH
     height: int = DEFAULT_FRAME_HEIGHT
-    quality: int = DEFAULT_JPEG_QUALITY
+    bitrate: int = DEFAULT_BANDWIDTH_BITRATE
+    keyframe_interval: int = DEFAULT_KEYFRAME_INTERVAL
     color_conversion: Optional[int] = cv2.COLOR_BGR2GRAY
 
     def __post_init__(self) -> None:
         if self.width <= 0 or self.height <= 0:
             raise ValueError('影像尺寸必須為正整數。')
-        if not (0 <= self.quality <= 100):
-            raise ValueError('JPEG 壓縮品質必須介於 0 到 100 之間。')
+        if self.bitrate <= 0:
+            raise ValueError('位元率必須為正整數。')
+        if self.keyframe_interval <= 0:
+            raise ValueError('關鍵幀間隔必須為正整數。')
 
 
 @dataclass(frozen=True)
@@ -45,14 +52,18 @@ class TransmissionConfig:
 class FrameEncoder:
     """負責影像預處理與 H.264 編碼。"""
 
-    def __init__(self, config: EncoderConfig, *, fps: float, keyframe_interval: int = 60) -> None:
+    def __init__(self, config: EncoderConfig, *, fps: float) -> None:
         self.config = config
         self.encoder = H264Encoder(
             width=config.width,
             height=config.height,
             fps=fps,
-            keyframe_interval=max(1, keyframe_interval),
+            bitrate=config.bitrate,
+            keyframe_interval=max(1, config.keyframe_interval),
         )
+
+    def force_keyframe(self) -> None:
+        self.encoder.force_keyframe()
 
     def encode(self, frame: Any) -> tuple[list[EncodedChunk], Any, int]:
         processed = frame
@@ -96,10 +107,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--camera-index', type=int, default=DEFAULT_CAMERA_INDEX, help='攝影機索引 (預設: %(default)s)')
     parser.add_argument('--width', type=int, default=DEFAULT_FRAME_WIDTH, help='輸出影像寬度 (預設: %(default)s)')
     parser.add_argument('--height', type=int, default=DEFAULT_FRAME_HEIGHT, help='輸出影像高度 (預設: %(default)s)')
-    parser.add_argument('--quality', type=int, default=DEFAULT_JPEG_QUALITY, help='JPEG 壓縮品質 0-100 (預設: %(default)s)')
     parser.add_argument('--color-mode', choices=('gray', 'bgr'), default='gray', help='影像編碼顏色模式 (預設: %(default)s)')
     parser.add_argument('--interval', type=float, default=DEFAULT_TRANSMIT_INTERVAL, help='幀與幀之間的最小秒數 (預設: %(default)s)')
     parser.add_argument('--serial-timeout', type=float, default=DEFAULT_SERIAL_TIMEOUT, help='序列埠 timeout 秒數 (預設: %(default)s)')
+    parser.add_argument('--bitrate', type=int, default=DEFAULT_BANDWIDTH_BITRATE, help='H.264 目標位元率 (bps，預設: %(default)s)')
+    parser.add_argument('--keyframe-interval', type=int, default=DEFAULT_KEYFRAME_INTERVAL, help='關鍵幀間隔 (預設: %(default)s)')
+    parser.add_argument('--motion-threshold', type=float, default=DEFAULT_MOTION_THRESHOLD, help='平均灰階變化門檻，低於此值則跳過傳送 (負值表示停用，預設: %(default)s)')
+    parser.add_argument('--max-idle', type=float, default=DEFAULT_MAX_IDLE_SECONDS, help='允許最長未送出秒數，超過則強制送一幀 (<=0 表示不限，預設: %(default)s)')
     return parser.parse_args()
 
 
@@ -135,11 +149,11 @@ def main() -> None:
             EncoderConfig(
                 width=args.width,
                 height=args.height,
-                quality=args.quality,
+                bitrate=args.bitrate,
+                keyframe_interval=args.keyframe_interval,
                 color_conversion=None if args.color_mode == 'bgr' else cv2.COLOR_BGR2GRAY,
             ),
             fps=fps_hint,
-            keyframe_interval=max(int(round(fps_hint * 2)), 1),
         )
     except ValueError as exc:
         print(f'無效的編碼參數: {exc}')
@@ -173,6 +187,11 @@ def main() -> None:
 
     frame_counter = 0
     loop_start = time.monotonic()
+    motion_threshold = args.motion_threshold
+    max_idle = max(args.max_idle, 0.0)
+    previous_gray: Optional[np.ndarray] = None
+    skipped_frames = 0
+    last_sent_time = time.monotonic()
 
     try:
         while True:
@@ -190,10 +209,39 @@ def main() -> None:
             if not chunks:
                 continue
 
+            contains_config = any(chunk.is_config for chunk in chunks)
+
+            current_gray = preview_frame
+            if isinstance(current_gray, np.ndarray) and current_gray.ndim == 3:
+                current_gray = cv2.cvtColor(current_gray, cv2.COLOR_BGR2GRAY)
+
+            if isinstance(current_gray, np.ndarray):
+                current_gray = current_gray.astype(np.uint8)
+
+            now = time.monotonic()
+            if (
+                motion_threshold >= 0
+                and isinstance(current_gray, np.ndarray)
+                and previous_gray is not None
+                and not contains_config
+            ):
+                diff_value = float(cv2.absdiff(previous_gray, current_gray).mean())
+                idle_duration = now - last_sent_time
+                if diff_value < motion_threshold and (max_idle <= 0 or idle_duration < max_idle):
+                    skipped_frames += 1
+                    previous_gray = current_gray
+                    continue
+                if diff_value < motion_threshold and max_idle > 0 and idle_duration >= max_idle:
+                    encoder.force_keyframe()
+
+            if isinstance(current_gray, np.ndarray):
+                previous_gray = current_gray
+
             encoded_size = 0
             framed_size = 0
             ascii_size = 0
             chunks_sent = 0
+            keyframe_sent = False
 
             try:
                 for chunk in chunks:
@@ -203,6 +251,8 @@ def main() -> None:
                     stats = transmitter.send(payload)
                     ascii_size += stats.stuffed_size
                     chunks_sent += 1
+                    last_sent_time = time.monotonic()
+                    keyframe_sent = keyframe_sent or chunk.is_keyframe
             except (serial.SerialException, TimeoutError) as exc:
                 print(f'序列埠寫入錯誤: {exc}')
                 break
@@ -213,7 +263,9 @@ def main() -> None:
             print(
                 f'成功傳送一幀影像，原始估計大小: {raw_size} bytes, '
                 f'H.264 編碼大小: {encoded_size} bytes, 封裝後大小: {framed_size} bytes, '
-                f'ASCII 編碼大小: {ascii_size} bytes, 分片數: {chunks_sent}, 平均頻率: {fps:.2f} fps'
+                f'ASCII 編碼大小: {ascii_size} bytes, 分片數: {chunks_sent}, '
+                f'是否關鍵幀: {"是" if keyframe_sent else "否"}, '
+                f'跳過累積: {skipped_frames}, 平均頻率: {fps:.2f} fps'
             )
 
             #cv2.imshow(WINDOW_TITLE, preview_frame)

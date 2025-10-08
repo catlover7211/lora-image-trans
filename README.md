@@ -35,6 +35,13 @@ python -m pip install opencv-python numpy pyserial av
    python capture.py
    ```
 
+   常用參數：
+
+   - `--bitrate`：調整 H.264 目標位元率，降低可節省頻寬。
+   - `--keyframe-interval`：設定關鍵幀間隔，數值越大表示較少完整畫面。
+   - `--motion-threshold`：畫面變化門檻，變化低於此值時跳過傳送。
+   - `--max-idle`：最多可允許多久不傳送，超過則強制送一幀以維持同步。
+
 按下 `q` 或 `Ctrl+C` 可結束程式。
 
 ## 單元測試

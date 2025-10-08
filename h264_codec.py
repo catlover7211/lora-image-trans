@@ -126,6 +126,10 @@ class H264Encoder:
             ))
         return chunks
 
+    def force_keyframe(self) -> None:
+        """Request the next frame to be encoded as a keyframe."""
+        self._frame_index = 0
+
 
 class H264Decoder:
     """Decodes H.264 payloads back into numpy image frames."""
