@@ -8,11 +8,12 @@ import struct
 import zlib
 
 import av  # type: ignore
+import cv2
 import numpy as np
 from av.packet import Packet
 from av.video.frame import PictureType
 
-VideoCodec = Literal["h264", "h265", "av1", "wavelet"]
+VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg"]
 
 
 @dataclass(frozen=True)
@@ -29,7 +30,7 @@ class EncodedChunk:
     FLAG_CODEC_HEVC = 0x04
     FLAG_CODEC_AV1 = 0x08
     FLAG_CODEC_WAVELET = 0x10
-    FLAG_CODEC_AV1 = 0x08
+    FLAG_CODEC_JPEG = 0x20
 
     def to_payload(self) -> bytes:
         """Convert the chunk into a protocol payload with a flag prefix."""
@@ -44,6 +45,8 @@ class EncodedChunk:
             flags |= self.FLAG_CODEC_AV1
         elif self.codec == "wavelet":
             flags |= self.FLAG_CODEC_WAVELET
+        elif self.codec == "jpeg":
+            flags |= self.FLAG_CODEC_JPEG
         return bytes((flags,)) + self.data
 
     @classmethod
@@ -54,6 +57,8 @@ class EncodedChunk:
         data = payload[1:]
         if flags & cls.FLAG_CODEC_WAVELET:
             codec: VideoCodec = "wavelet"
+        elif flags & cls.FLAG_CODEC_JPEG:
+            codec = "jpeg"
         elif flags & cls.FLAG_CODEC_AV1:
             codec = "av1"
         elif flags & cls.FLAG_CODEC_HEVC:
@@ -241,6 +246,44 @@ class H264Encoder:
         """Schedule codec configuration to be resent for upcoming frames."""
         self._force_config = True
         self._config_burst = max(self._config_burst, count)
+
+
+class JPEGEncoder:
+    """Encodes numpy image frames into baseline JPEG payloads."""
+
+    def __init__(self, width: int, height: int, *, quality: int = 85) -> None:
+        if width <= 0 or height <= 0:
+            raise ValueError("影像尺寸必須為正整數")
+        if not (1 <= quality <= 100):
+            raise ValueError("JPEG 品質需介於 1 到 100")
+        self.width = width
+        self.height = height
+        self.quality = int(quality)
+        self._encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), self.quality]
+
+    def encode(self, frame_bgr: np.ndarray) -> List[EncodedChunk]:
+        if frame_bgr.shape[0] != self.height or frame_bgr.shape[1] != self.width:
+            raise ValueError("輸入影像尺寸與編碼器不符")
+        if frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3:
+            raise ValueError("輸入影像需為 BGR 三通道格式")
+
+        success, buffer = cv2.imencode(".jpg", frame_bgr, self._encode_params)
+        if not success:
+            raise RuntimeError("JPEG 編碼失敗")
+
+        chunk = EncodedChunk(
+            data=buffer.tobytes(),
+            codec="jpeg",
+            is_keyframe=True,
+            is_config=False,
+        )
+        return [chunk]
+
+    def force_keyframe(self) -> None:
+        return
+
+    def force_config_repeat(self, count: int = 3) -> None:
+        return
 
 
 def _bgr_to_ycocg(frame: np.ndarray) -> np.ndarray:
@@ -472,6 +515,15 @@ class H264Decoder:
             if chunk.is_config:
                 return []
             return [self._wavelet_decoder.decode_chunk(chunk)]
+        if codec_name == "jpeg":
+            self._codec_name = "jpeg"
+            if chunk.is_config:
+                return []
+            buffer = np.frombuffer(chunk.data, dtype=np.uint8)
+            image = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+            if image is None:
+                raise RuntimeError("JPEG 解碼失敗")
+            return [image]
 
         context = self._open_codec(codec_name)
 
@@ -492,6 +544,8 @@ class H264Decoder:
     def flush(self) -> Iterable[np.ndarray]:
         if self._codec_name == "wavelet":
             return list(self._wavelet_decoder.flush())
+        if self._codec_name == "jpeg":
+            return []
         if self.codec is None:
             return []
 

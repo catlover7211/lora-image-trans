@@ -7,7 +7,7 @@ from typing import Literal, Optional
 import cv2
 
 ColorMode = Literal["gray", "bgr"]
-VideoCodec = Literal["h264", "h265", "av1", "wavelet"]
+VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg"]
 
 
 @dataclass(frozen=True)
@@ -55,6 +55,9 @@ class ImageSettings:
 
     rx_buffer_size: int = 32
     """接收端待顯示緩衝區容量。32 幀可避免主程式顯示延遲阻塞解碼。"""
+
+    jpeg_quality: int = 85
+    """JPEG 壓縮品質 (1-100)。預設 85 在串口頻寬下兼顧畫質與大小。"""
 
 
 DEFAULT_IMAGE_SETTINGS = ImageSettings()
