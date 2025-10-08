@@ -144,7 +144,7 @@ def main() -> None:
         ser.close()
         return
 
-    protocol = FrameProtocol()
+    protocol = FrameProtocol(use_chunk_ack=True, ack_timeout=max(args.serial_timeout, 0.0))
     transmitter = FrameTransmitter(ser, protocol=protocol, config=transmitter_config)
 
     print('攝影機已啟動，開始擷取與傳送影像...')
@@ -168,7 +168,7 @@ def main() -> None:
 
             try:
                 stats = transmitter.send(payload)
-            except serial.SerialException as exc:
+            except (serial.SerialException, TimeoutError) as exc:
                 print(f'序列埠寫入錯誤: {exc}')
                 break
 

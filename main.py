@@ -42,7 +42,7 @@ def main() -> None:
     if ser is None:
         return
 
-    protocol = FrameProtocol(max_payload_size=MAX_PAYLOAD_SIZE)
+    protocol = FrameProtocol(max_payload_size=MAX_PAYLOAD_SIZE, use_chunk_ack=True)
 
     print("已連接序列埠，開始等待接收影像...")
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")

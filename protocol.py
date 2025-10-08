@@ -21,6 +21,8 @@ LINE_TERMINATOR = "\n"
 DEFAULT_CHUNK_SIZE = 256
 DEFAULT_INTER_CHUNK_DELAY = 0.001  # seconds
 DEFAULT_MAX_PAYLOAD_SIZE = 128 * 1024  # 128 KB (raw payload)
+ACK_MESSAGE = b"ACK\n"
+DEFAULT_ACK_TIMEOUT = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +94,8 @@ class FrameProtocol:
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         inter_chunk_delay: float = DEFAULT_INTER_CHUNK_DELAY,
         max_payload_size: int = DEFAULT_MAX_PAYLOAD_SIZE,
+        use_chunk_ack: bool = False,
+        ack_timeout: float = DEFAULT_ACK_TIMEOUT,
     ) -> None:
         if chunk_size <= 0:
             raise ValueError("chunk_size 必須為正整數")
@@ -100,6 +104,8 @@ class FrameProtocol:
         self.max_payload_size = max_payload_size
         # Upper bound for encoded ASCII length (base64 expands ~4/3)
         self.max_encoded_size = int(max_payload_size * 4 / 3) + 16
+        self.use_chunk_ack = use_chunk_ack
+        self.ack_timeout = max(0.0, ack_timeout)
         self._last_error: Optional[str] = None
 
     # -------------------------- Encoding helpers --------------------------
@@ -127,6 +133,8 @@ class FrameProtocol:
             ser.write(chunk)
             if self.inter_chunk_delay:
                 time.sleep(self.inter_chunk_delay)
+            if self.use_chunk_ack and not self._wait_for_ack(ser):
+                raise TimeoutError("等待 ACK 時間逾時")
         ser.flush()
         return stats
 
@@ -211,13 +219,40 @@ class FrameProtocol:
         return Frame(payload=payload, stats=stats)
 
     # -------------------------- Internal helpers --------------------------
+    def _wait_for_ack(self, ser: SerialLike) -> bool:
+        deadline = time.monotonic() + self.ack_timeout if self.ack_timeout > 0 else None
+        buffer = bytearray()
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            chunk = ser.read(1)
+            if chunk:
+                buffer.extend(chunk)
+                if len(buffer) > len(ACK_MESSAGE):
+                    del buffer[:-len(ACK_MESSAGE)]
+                if buffer.endswith(ACK_MESSAGE):
+                    return True
+                continue
+            time.sleep(0.001)
+
     def _read_line(self, ser: SerialLike, *, block: bool) -> Optional[bytes]:
         buffer = bytearray()
+        bytes_since_ack = 0
         while True:
             chunk = ser.read(1)
             if chunk:
                 buffer.extend(chunk)
+                if self.use_chunk_ack:
+                    bytes_since_ack += 1
+                    if bytes_since_ack >= self.chunk_size:
+                        ser.write(ACK_MESSAGE)
+                        ser.flush()
+                        bytes_since_ack = 0
                 if chunk == b"\n":
+                    if self.use_chunk_ack and bytes_since_ack > 0:
+                        ser.write(ACK_MESSAGE)
+                        ser.flush()
+                        bytes_since_ack = 0
                     return bytes(buffer)
                 if len(buffer) > self.max_encoded_size + 64:
                     # Prevent unbounded growth in case of malformed stream
@@ -226,3 +261,4 @@ class FrameProtocol:
                 continue
             if not block:
                 return None
+            time.sleep(0.001)
