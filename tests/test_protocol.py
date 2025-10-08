@@ -1,5 +1,6 @@
 import base64
 import threading
+import time
 import unittest
 from typing import Optional
 
@@ -128,6 +129,39 @@ class FrameProtocolTest(unittest.TestCase):
         frame = received_frame["frame"]
         self.assertIsNotNone(frame)
         assert frame  # for mypy / type checkers
+        self.assertEqual(frame.payload, payload)
+        self.assertEqual(frame.stats.crc, stats.crc)
+
+    def test_chunk_ack_initial_skip(self) -> None:
+        sender_ser, receiver_ser = create_full_duplex_pair()
+        sender_protocol = FrameProtocol(
+            inter_chunk_delay=0,
+            chunk_size=16,
+            use_chunk_ack=True,
+            ack_timeout=0.2,
+            initial_skip_acks=1,
+        )
+        receiver_protocol = FrameProtocol(
+            inter_chunk_delay=0,
+            chunk_size=16,
+            use_chunk_ack=True,
+        )
+
+        payload = bytes(range(64))
+        received_frame: dict[str, Optional[Frame]] = {"frame": None}
+
+        def receiver_task() -> None:
+            time.sleep(0.1)
+            received_frame["frame"] = receiver_protocol.receive_frame(receiver_ser, block=True)
+
+        thread = threading.Thread(target=receiver_task)
+        thread.start()
+        stats = sender_protocol.send_frame(sender_ser, payload)
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive(), "接收執行緒未正常結束")
+        frame = received_frame["frame"]
+        self.assertIsNotNone(frame)
+        assert frame
         self.assertEqual(frame.payload, payload)
         self.assertEqual(frame.stats.crc, stats.crc)
 

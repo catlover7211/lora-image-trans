@@ -20,9 +20,10 @@ FIELD_SEPARATOR = " "
 LINE_TERMINATOR = "\n"
 DEFAULT_CHUNK_SIZE = 256
 DEFAULT_INTER_CHUNK_DELAY = 0.001  # seconds
-DEFAULT_MAX_PAYLOAD_SIZE = 128 * 1024  # 128 KB (raw payload)
+DEFAULT_MAX_PAYLOAD_SIZE = 1920 * 1080  # 128 KB (raw payload)
 ACK_MESSAGE = b"ACK\n"
 DEFAULT_ACK_TIMEOUT = 1.0
+DEFAULT_INITIAL_ACK_SKIP = 0
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +97,7 @@ class FrameProtocol:
         max_payload_size: int = DEFAULT_MAX_PAYLOAD_SIZE,
         use_chunk_ack: bool = False,
         ack_timeout: float = DEFAULT_ACK_TIMEOUT,
+        initial_skip_acks: int = DEFAULT_INITIAL_ACK_SKIP,
     ) -> None:
         if chunk_size <= 0:
             raise ValueError("chunk_size 必須為正整數")
@@ -106,6 +108,7 @@ class FrameProtocol:
         self.max_encoded_size = int(max_payload_size * 4 / 3) + 16
         self.use_chunk_ack = use_chunk_ack
         self.ack_timeout = max(0.0, ack_timeout)
+        self._acks_to_skip = max(0, initial_skip_acks)
         self._last_error: Optional[str] = None
 
     # -------------------------- Encoding helpers --------------------------
@@ -133,7 +136,12 @@ class FrameProtocol:
             ser.write(chunk)
             if self.inter_chunk_delay:
                 time.sleep(self.inter_chunk_delay)
-            if self.use_chunk_ack and not self._wait_for_ack(ser):
+            if not self.use_chunk_ack:
+                continue
+            if self._acks_to_skip > 0:
+                self._acks_to_skip -= 1
+                continue
+            if not self._wait_for_ack(ser):
                 raise TimeoutError("等待 ACK 時間逾時")
         ser.flush()
         return stats

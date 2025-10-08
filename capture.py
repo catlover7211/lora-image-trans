@@ -144,7 +144,11 @@ def main() -> None:
         ser.close()
         return
 
-    protocol = FrameProtocol(use_chunk_ack=True, ack_timeout=max(args.serial_timeout, 0.0))
+    protocol = FrameProtocol(
+        use_chunk_ack=True,
+        ack_timeout=max(args.serial_timeout, 0.0),
+        initial_skip_acks=1,
+    )
     transmitter = FrameTransmitter(ser, protocol=protocol, config=transmitter_config)
 
     print('攝影機已啟動，開始擷取與傳送影像...')
