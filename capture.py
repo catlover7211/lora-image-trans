@@ -68,18 +68,26 @@ class FrameTransmitter:
         self.config = config
         self._last_sent: Optional[float] = None
 
-    def send(self, payload: bytes) -> FrameStats:
+    def send(self, payload: bytes, max_retries: int = 3) -> FrameStats:
         if self.config.interval > 0 and self._last_sent is not None:
             elapsed = time.monotonic() - self._last_sent
             remaining = self.config.interval - elapsed
             if remaining > 0:
                 time.sleep(remaining)
-        stats = self.protocol.send_frame(self.serial_port, payload)
-        self._last_sent = time.monotonic()
-        # Wait for ACK
-        if not self.protocol.wait_for_ack(self.serial_port, timeout=2.0):
-            raise ValueError("No ACK received from receiver")
-        return stats
+        
+        for attempt in range(max_retries + 1):
+            try:
+                stats = self.protocol.send_frame(self.serial_port, payload)
+                if self.protocol.wait_for_ack(self.serial_port, timeout=2.0):
+                    self._last_sent = time.monotonic()
+                    return stats
+                else:
+                    print(f"警告: 未收到 ACK，重試 {attempt + 1}/{max_retries + 1}")
+            except Exception as e:
+                print(f"發送失敗: {e}，重試 {attempt + 1}/{max_retries + 1}")
+                time.sleep(0.1)  # 短暫延遲
+        
+        raise ValueError(f"發送失敗，未收到 ACK，重試 {max_retries + 1} 次")
 
 
 def parse_args() -> argparse.Namespace:
