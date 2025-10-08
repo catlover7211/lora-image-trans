@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 import serial
 
-from h264_codec import EncodedChunk, H264Encoder, VideoCodec
+from h264_codec import EncodedChunk, H264Encoder, VideoCodec, WaveletEncoder
 from image_settings import DEFAULT_IMAGE_SETTINGS, color_conversion
 from protocol import BAUD_RATE, FrameProtocol, FrameStats, auto_detect_serial_port
 
@@ -27,6 +27,8 @@ class EncoderConfig:
     keyframe_interval: int = IMAGE_DEFAULTS.keyframe_interval
     color_conversion: Optional[int] = color_conversion(IMAGE_DEFAULTS.color_mode)
     codec: VideoCodec = IMAGE_DEFAULTS.codec
+    wavelet_levels: int = IMAGE_DEFAULTS.wavelet_levels
+    wavelet_quant: int = IMAGE_DEFAULTS.wavelet_quant
 
     def __post_init__(self) -> None:
         if self.width <= 0 or self.height <= 0:
@@ -35,6 +37,10 @@ class EncoderConfig:
             raise ValueError('位元率必須為正整數。')
         if self.keyframe_interval <= 0:
             raise ValueError('關鍵幀間隔必須為正整數。')
+        if self.wavelet_levels < 0:
+            raise ValueError('Wavelet 層數不得為負數。')
+        if self.wavelet_quant <= 0:
+            raise ValueError('Wavelet 量化步階必須為正整數。')
 
 
 @dataclass(frozen=True)
@@ -51,17 +57,27 @@ class FrameEncoder:
 
     def __init__(self, config: EncoderConfig, *, fps: float) -> None:
         self.config = config
-        self.encoder = H264Encoder(
-            width=config.width,
-            height=config.height,
-            fps=fps,
-            bitrate=config.bitrate,
-            keyframe_interval=max(1, config.keyframe_interval),
-            codec=config.codec,
-        )
+        if config.codec == 'wavelet':
+            self.encoder = WaveletEncoder(
+                width=config.width,
+                height=config.height,
+                levels=config.wavelet_levels,
+                quant_step=config.wavelet_quant,
+            )
+        else:
+            self.encoder = H264Encoder(
+                width=config.width,
+                height=config.height,
+                fps=fps,
+                bitrate=config.bitrate,
+                keyframe_interval=max(1, config.keyframe_interval),
+                codec=config.codec,
+            )
+        self.codec_name = config.codec
 
     def force_keyframe(self) -> None:
-        self.encoder.force_keyframe()
+        if hasattr(self.encoder, "force_keyframe"):
+            self.encoder.force_keyframe()
         if hasattr(self.encoder, "force_config_repeat"):
             self.encoder.force_config_repeat()
 
@@ -108,7 +124,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--width', type=int, default=IMAGE_DEFAULTS.width, help='輸出影像寬度 (預設: %(default)s)')
     parser.add_argument('--height', type=int, default=IMAGE_DEFAULTS.height, help='輸出影像高度 (預設: %(default)s)')
     parser.add_argument('--color-mode', choices=('gray', 'bgr'), default=IMAGE_DEFAULTS.color_mode, help='影像編碼顏色模式 (預設: %(default)s)')
-    parser.add_argument('--codec', choices=('h264', 'h265', 'av1'), default=IMAGE_DEFAULTS.codec, help='選擇影像編碼器 (預設: %(default)s)')
+    parser.add_argument('--codec', choices=('h264', 'h265', 'av1', 'wavelet'), default=IMAGE_DEFAULTS.codec, help='選擇影像編碼器 (預設: %(default)s)')
     parser.add_argument('--interval', type=float, default=IMAGE_DEFAULTS.transmit_interval, help='幀與幀之間的最小秒數 (預設: %(default)s)')
     parser.add_argument('--camera-fps', type=float, default=None, help='嘗試設定攝影機的擷取 FPS (<=0 表示維持裝置預設)')
     parser.add_argument('--serial-timeout', type=float, default=DEFAULT_SERIAL_TIMEOUT, help='序列埠 timeout 秒數 (預設: %(default)s)')
@@ -116,6 +132,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--keyframe-interval', type=int, default=IMAGE_DEFAULTS.keyframe_interval, help='關鍵幀間隔 (預設: %(default)s)')
     parser.add_argument('--motion-threshold', type=float, default=IMAGE_DEFAULTS.motion_threshold, help='平均灰階變化門檻，低於此值則跳過傳送 (負值表示停用，預設: %(default)s)')
     parser.add_argument('--max-idle', type=float, default=IMAGE_DEFAULTS.max_idle_seconds, help='允許最長未送出秒數，超過則強制送一幀 (<=0 表示不限，預設: %(default)s)')
+    parser.add_argument('--wavelet-levels', type=int, default=IMAGE_DEFAULTS.wavelet_levels, help='Wavelet 轉換層數 (僅 wavelet 編碼器使用，預設: %(default)s)')
+    parser.add_argument('--wavelet-quant', type=int, default=IMAGE_DEFAULTS.wavelet_quant, help='Wavelet 量化步階 (僅 wavelet 編碼器使用，預設: %(default)s)')
     return parser.parse_args()
 
 
@@ -158,6 +176,8 @@ def main() -> None:
                 keyframe_interval=args.keyframe_interval,
                 color_conversion=color_conversion(args.color_mode),
                 codec=cast(VideoCodec, args.codec),
+                wavelet_levels=args.wavelet_levels,
+                wavelet_quant=args.wavelet_quant,
             ),
             fps=fps_hint,
         )

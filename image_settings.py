@@ -7,7 +7,7 @@ from typing import Literal, Optional
 import cv2
 
 ColorMode = Literal["gray", "bgr"]
-VideoCodec = Literal["h264", "h265", "av1"]
+VideoCodec = Literal["h264", "h265", "av1", "wavelet"]
 
 
 @dataclass(frozen=True)
@@ -38,8 +38,14 @@ class ImageSettings:
     color_mode: ColorMode = "gray"
     """預設採用灰階輸出，可改為 'bgr' 取得彩色畫面。"""
 
-    codec: VideoCodec = 'h264'
-    """影像編碼器類型。另支援 'av1' 取得更高壓縮率（但需相容的 FFmpeg/硬體）。"""
+    codec: VideoCodec = 'wavelet'
+    """影像編碼器類型。另支援 'av1' 與 'wavelet'，須視 FFmpeg/硬體或自訂解碼器支援而定。"""
+
+    wavelet_levels: int = 2
+    """Wavelet 轉換層數（僅 wavelet 編碼器使用），需小於等於影像尺寸的 log2。"""
+
+    wavelet_quant: int = 12
+    """Wavelet 係數量化步階（僅 wavelet 編碼器使用），越大壓縮越高但細節越少。"""
 
 
 DEFAULT_IMAGE_SETTINGS = ImageSettings()

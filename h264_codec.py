@@ -4,13 +4,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any, Iterable, List, Literal, Optional
+import struct
+import zlib
 
 import av  # type: ignore
 import numpy as np
 from av.packet import Packet
 from av.video.frame import PictureType
 
-VideoCodec = Literal["h264", "h265", "av1"]
+VideoCodec = Literal["h264", "h265", "av1", "wavelet"]
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,8 @@ class EncodedChunk:
     FLAG_CONFIG = 0x02
     FLAG_CODEC_HEVC = 0x04
     FLAG_CODEC_AV1 = 0x08
+    FLAG_CODEC_WAVELET = 0x10
+    FLAG_CODEC_AV1 = 0x08
 
     def to_payload(self) -> bytes:
         """Convert the chunk into a protocol payload with a flag prefix."""
@@ -38,6 +42,8 @@ class EncodedChunk:
             flags |= self.FLAG_CODEC_HEVC
         elif self.codec == "av1":
             flags |= self.FLAG_CODEC_AV1
+        elif self.codec == "wavelet":
+            flags |= self.FLAG_CODEC_WAVELET
         return bytes((flags,)) + self.data
 
     @classmethod
@@ -46,8 +52,10 @@ class EncodedChunk:
             raise ValueError("payload 不可為空")
         flags = payload[0]
         data = payload[1:]
-        if flags & cls.FLAG_CODEC_AV1:
-            codec: VideoCodec = "av1"
+        if flags & cls.FLAG_CODEC_WAVELET:
+            codec: VideoCodec = "wavelet"
+        elif flags & cls.FLAG_CODEC_AV1:
+            codec = "av1"
         elif flags & cls.FLAG_CODEC_HEVC:
             codec = "h265"
         else:
@@ -76,6 +84,8 @@ class H264Encoder:
         keyframe_interval: int = 30,
         codec: VideoCodec = "h264",
     ) -> None:
+        if codec == "wavelet":
+            raise ValueError("wavelet 編碼請使用 WaveletEncoder")
         if width <= 0 or height <= 0:
             raise ValueError("影像尺寸必須為正整數")
         if fps <= 0:
@@ -233,14 +243,198 @@ class H264Encoder:
         self._config_burst = max(self._config_burst, count)
 
 
+def _bgr_to_ycocg(frame: np.ndarray) -> np.ndarray:
+    b = frame[..., 0].astype(np.int32)
+    g = frame[..., 1].astype(np.int32)
+    r = frame[..., 2].astype(np.int32)
+    co = r - b
+    t = b + (co >> 1)
+    cg = g - t
+    y = t + (cg >> 1)
+    return np.stack((y, co, cg), axis=2)
+
+
+def _ycocg_to_bgr(data: np.ndarray) -> np.ndarray:
+    y = data[..., 0]
+    co = data[..., 1]
+    cg = data[..., 2]
+    t = y - (cg >> 1)
+    g = cg + t
+    b = t - (co >> 1)
+    r = co + b
+    stacked = np.stack((b, g, r), axis=2)
+    return np.clip(stacked, 0, 255).astype(np.uint8)
+
+
+def _max_wavelet_levels(width: int, height: int) -> int:
+    levels = 0
+    while width % 2 == 0 and height % 2 == 0 and width > 1 and height > 1:
+        levels += 1
+        width //= 2
+        height //= 2
+    return levels
+
+
+def _haar_forward_block(block: np.ndarray) -> None:
+    rows, cols = block.shape
+    half_cols = cols // 2
+    temp = block.copy()
+    block[:, :half_cols] = (temp[:, 0::2] + temp[:, 1::2]) / 2.0
+    block[:, half_cols:half_cols * 2] = temp[:, 0::2] - temp[:, 1::2]
+
+    temp = block.copy()
+    half_rows = rows // 2
+    block[:half_rows, :] = (temp[0::2, :] + temp[1::2, :]) / 2.0
+    block[half_rows:half_rows * 2, :] = temp[0::2, :] - temp[1::2, :]
+
+
+def _haar_inverse_block(block: np.ndarray) -> None:
+    rows, cols = block.shape
+    half_rows = rows // 2
+    temp = block.copy()
+    avg = temp[:half_rows, :]
+    diff = temp[half_rows:half_rows * 2, :]
+    recon = np.empty_like(block)
+    recon[0::2, :] = avg + diff / 2.0
+    recon[1::2, :] = avg - diff / 2.0
+
+    temp = recon.copy()
+    half_cols = cols // 2
+    avg = temp[:, :half_cols]
+    diff = temp[:, half_cols:half_cols * 2]
+    block[:, 0::2] = avg + diff / 2.0
+    block[:, 1::2] = avg - diff / 2.0
+
+
+def _haar_forward(channel: np.ndarray, levels: int) -> np.ndarray:
+    if levels <= 0:
+        return channel.astype(np.float32)
+    result = channel.astype(np.float32, copy=True)
+    height, width = result.shape
+    for level in range(levels):
+        rows = height >> level
+        cols = width >> level
+        if rows < 2 or cols < 2:
+            break
+        _haar_forward_block(result[:rows, :cols])
+    return result
+
+
+def _haar_inverse(coeffs: np.ndarray, levels: int) -> np.ndarray:
+    if levels <= 0:
+        return coeffs.astype(np.float32)
+    result = coeffs.astype(np.float32, copy=True)
+    height, width = result.shape
+    for level in reversed(range(levels)):
+        rows = height >> level
+        cols = width >> level
+        if rows < 2 or cols < 2:
+            continue
+        _haar_inverse_block(result[:rows, :cols])
+    return result
+
+
+class WaveletEncoder:
+    """Simple YCoCg + Haar wavelet encoder producing intra-only frames."""
+
+    VERSION = 1
+    HEADER_STRUCT = struct.Struct("<BHHHBB")  # version, width, height, quant, levels, channels
+
+    def __init__(self, width: int, height: int, *, levels: int = 2, quant_step: int = 12) -> None:
+        if width <= 0 or height <= 0:
+            raise ValueError("影像尺寸必須為正整數")
+        if quant_step <= 0:
+            raise ValueError("量化步階必須為正整數")
+        self.width = width
+        self.height = height
+        self.quant_step = quant_step
+        self.levels = min(max(0, levels), _max_wavelet_levels(width, height))
+
+    def encode(self, frame_bgr: np.ndarray) -> List[EncodedChunk]:
+        if frame_bgr.shape[0] != self.height or frame_bgr.shape[1] != self.width or frame_bgr.shape[2] != 3:
+            raise ValueError("輸入影像尺寸與編碼器不符")
+
+        ycocg = _bgr_to_ycocg(frame_bgr)
+        coeffs = []
+        for c in range(3):
+            forward = _haar_forward(ycocg[..., c], self.levels)
+            quantized = np.rint(forward / self.quant_step).astype(np.int16)
+            coeffs.append(quantized)
+        quantized_stack = np.stack(coeffs, axis=2)
+        payload_body = zlib.compress(quantized_stack.tobytes(), level=6)
+        header = self.HEADER_STRUCT.pack(
+            self.VERSION,
+            self.width,
+            self.height,
+            self.quant_step,
+            self.levels,
+            3,
+        )
+        chunk = EncodedChunk(
+            data=header + payload_body,
+            codec="wavelet",
+            is_keyframe=True,
+            is_config=False,
+        )
+        return [chunk]
+
+    def force_keyframe(self) -> None:
+        # All frames are intra-only; nothing to do.
+        return
+
+
+class WaveletDecoder:
+    """Inverse transform for the custom YCoCg + wavelet encoder."""
+
+    HEADER_STRUCT = WaveletEncoder.HEADER_STRUCT
+
+    def decode_chunk(self, chunk: EncodedChunk) -> np.ndarray:
+        data = chunk.data
+        if len(data) <= self.HEADER_STRUCT.size:
+            raise RuntimeError("Wavelet 資料長度不正確")
+        header = data[:self.HEADER_STRUCT.size]
+        version, width, height, quant_step, levels, channels = self.HEADER_STRUCT.unpack(header)
+        if version != WaveletEncoder.VERSION:
+            raise RuntimeError(f"Wavelet 版本不支援: {version}")
+        if channels != 3:
+            raise RuntimeError("僅支援 3 通道波形資料")
+        compressed = data[self.HEADER_STRUCT.size:]
+        try:
+            decompressed = zlib.decompress(compressed)
+        except zlib.error as exc:
+            raise RuntimeError(f"Wavelet 解壓失敗: {exc}") from exc
+        expected_bytes = width * height * channels * np.dtype(np.int16).itemsize
+        if len(decompressed) != expected_bytes:
+            raise RuntimeError("Wavelet 解壓後長度不符")
+        coeffs = np.frombuffer(decompressed, dtype=np.int16).reshape((height, width, channels)).astype(np.float32)
+        coeffs *= quant_step
+        channels_rec = []
+        for c in range(channels):
+            restored = _haar_inverse(coeffs[..., c], levels)
+            channels_rec.append(restored)
+        ycocg = np.stack(channels_rec, axis=2).astype(np.int32)
+        return _ycocg_to_bgr(ycocg)
+
+    def decode(self, chunk: EncodedChunk) -> Iterable[np.ndarray]:
+        if chunk.is_config:
+            return []
+        return [self.decode_chunk(chunk)]
+
+    def flush(self) -> Iterable[np.ndarray]:
+        return []
+
+
 class H264Decoder:
     """Decodes H.264/H.265/AV1 payloads back into numpy image frames."""
 
     def __init__(self) -> None:
         self.codec: Optional[Any] = None
         self._codec_name: Optional[VideoCodec] = None
+        self._wavelet_decoder = WaveletDecoder()
 
     def _open_codec(self, codec_name: VideoCodec) -> Any:
+        if codec_name == "wavelet":
+            raise RuntimeError("Wavelet 解碼器應透過專用路徑建立")
         if self.codec is not None and self._codec_name == codec_name:
             return self.codec
 
@@ -269,6 +463,12 @@ class H264Decoder:
 
     def decode(self, chunk: EncodedChunk) -> Iterable[np.ndarray]:
         codec_name: VideoCodec = chunk.codec
+        if codec_name == "wavelet":
+            self._codec_name = "wavelet"
+            if chunk.is_config:
+                return []
+            return [self._wavelet_decoder.decode_chunk(chunk)]
+
         context = self._open_codec(codec_name)
 
         if chunk.is_config:
@@ -286,6 +486,8 @@ class H264Decoder:
         return frames
 
     def flush(self) -> Iterable[np.ndarray]:
+        if self._codec_name == "wavelet":
+            return list(self._wavelet_decoder.flush())
         if self.codec is None:
             return []
 
