@@ -56,7 +56,7 @@ class ImageSettings:
     rx_buffer_size: int = 32
     """接收端待顯示緩衝區容量。32 幀可避免主程式顯示延遲阻塞解碼。"""
 
-    jpeg_quality: int = 8
+    jpeg_quality: int = 10
     """JPEG 壓縮品質 (1-100)。預設 85 在串口頻寬下兼顧畫質與大小。"""
 
 
