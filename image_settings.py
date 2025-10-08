@@ -13,26 +13,26 @@ ColorMode = Literal["gray", "bgr"]
 class ImageSettings:
     """影像擷取與編碼相關的預設參數。"""
 
-    width: int = 1920
-    """輸出影像寬度（像素）。"""
+    width: int = 640
+    """輸出影像寬度（像素）。維持 16:9 且兼顧畫質與編碼效率。"""
 
-    height: int = 1080
-    """輸出影像高度（像素）。"""
+    height: int = 360
+    """輸出影像高度（像素）。搭配 640x360 約等於 360p，便於在低頻寬下維持較高幀率。"""
 
-    target_bitrate: int = 100_000
-    """H.264 目標位元率（每秒位元數）。實測低於 10 kbps 會導致編碼器初始化失敗。"""
+    target_bitrate: int = 400_000
+    """H.264 目標位元率（每秒位元數）。約 400 kbps 可支援 360p@20fps 且避免 libx264 初始化失敗。"""
 
-    keyframe_interval: int = 100
-    """每隔多少幀強制產生一次關鍵幀（I-Frame）。數值越大，差分壓縮越積極。"""
+    keyframe_interval: int = 30
+    """每隔多少幀強制產生一次關鍵幀（I-Frame）。30 代表約 1 秒更新一次，有利串流穩定性。"""
 
-    motion_threshold: float = 2.0
-    """平均灰階差異門檻（0-255）。低於該值視為無顯著變化，可跳過傳送。"""
+    motion_threshold: float = 6.0
+    """平均灰階差異門檻（0-255）。提高到 6 可減少雜訊導致的誤判，同時保留明顯變化。"""
 
-    max_idle_seconds: float = 10.0
-    """允許最長無傳輸的時間（秒）。超過後即使無變化也會強制送出一幀。"""
+    max_idle_seconds: float = 2.0
+    """允許最長無傳輸的時間（秒）。最長 2 秒沒變化也會送幀，避免畫面停住。"""
 
-    transmit_interval: float = 1.0
-    """兩幀之間的最短間隔（秒），用於節流避免過度佔用頻寬。"""
+    transmit_interval: float = 0.05
+    """兩幀之間的最短間隔（秒）。0.05 約等於 20 fps，可在硬體允許下提升流暢度。"""
 
     color_mode: ColorMode = "gray"
     """預設採用灰階輸出，可改為 'bgr' 取得彩色畫面。"""
