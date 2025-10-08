@@ -137,6 +137,7 @@ class FrameProtocol:
         self.inter_chunk_delay = max(inter_chunk_delay, 0.0)
         self.max_stuffed_size = max_stuffed_size
         self.max_payload_size = max_payload_size
+        self._last_error: Optional[str] = None
 
     # -------------------------- Encoding helpers --------------------------
     def build_frame(self, payload: bytes) -> tuple[bytes, FrameStats]:
@@ -163,6 +164,11 @@ class FrameProtocol:
         ser.flush()
         return stats
 
+    @property
+    def last_error(self) -> Optional[str]:
+        """Return the most recent receive error, if any."""
+        return self._last_error
+
     # -------------------------- Decoding helpers --------------------------
     def receive_frame(self, ser: SerialLike, *, block: bool = True) -> Optional[Frame]:
         """Attempt to read and validate a single frame from *ser*.
@@ -172,10 +178,12 @@ class FrameProtocol:
         next frame until data arrives.
         """
         if not self._await_start_marker(ser, block=block):
+            self._last_error = "等待開始標記逾時"
             return None
 
         header = self._read_exact(ser, HEADER_SIZE, block=True)
         if header is None:
+            self._last_error = "無法讀取標頭"
             return None
 
         try:
@@ -183,29 +191,35 @@ class FrameProtocol:
         except struct.error:
             # Corrupted header: resynchronise
             self._discard_until_end(ser)
+            self._last_error = "標頭解碼失敗"
             return None
 
         if stuffed_size <= 0 or stuffed_size > self.max_stuffed_size:
             # Invalid size, discard until we reach the end marker
             self._discard_until_end(ser)
+            self._last_error = f"填充長度異常: {stuffed_size}"
             return None
 
         stuffed_payload = self._read_exact(ser, stuffed_size, block=True)
         if stuffed_payload is None:
+            self._last_error = "填充資料讀取不足"
             return None
 
         end_marker = self._read_exact(ser, len(END_OF_FRAME), block=True)
         if end_marker != END_OF_FRAME:
             # Attempt to resynchronise for subsequent frames
             self._discard_until_end(ser)
+            self._last_error = "未找到結束標記"
             return None
 
         payload = unstuff_bytes(stuffed_payload)
         if not payload or len(payload) > self.max_payload_size:
+            self._last_error = f"反填充後大小異常: {len(payload)}"
             return None
 
         crc = zlib.crc32(payload) & 0xFFFFFFFF
         if crc != expected_crc:
+            self._last_error = "CRC 驗證失敗"
             return None
 
         stats = FrameStats(
@@ -213,6 +227,7 @@ class FrameProtocol:
             stuffed_size=len(stuffed_payload),
             crc=crc,
         )
+        self._last_error = None
         return Frame(payload=payload, stats=stats)
 
     # -------------------------- Internal helpers --------------------------

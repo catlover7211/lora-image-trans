@@ -47,10 +47,16 @@ def main() -> None:
     print("已連接序列埠，開始等待接收影像...")
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")
 
+    last_error_reported: Optional[str] = None
+
     try:
         while True:
             frame = protocol.receive_frame(ser, block=True)
             if frame is None:
+                error = protocol.last_error
+                if error and error != last_error_reported:
+                    print(f"接收失敗: {error}")
+                    last_error_reported = error
                 continue
 
             if frame.stats.payload_size == 0:
@@ -66,6 +72,8 @@ def main() -> None:
                 f"成功接收並解碼一幀影像，反填充大小: {frame.stats.payload_size} bytes, "
                 f"填充後大小: {frame.stats.stuffed_size} bytes, CRC: {frame.stats.crc:08x}"
             )
+
+            last_error_reported = None
 
             cv2.imshow(WINDOW_TITLE, image)
             if cv2.waitKey(1) & 0xFF == ord('q'):
