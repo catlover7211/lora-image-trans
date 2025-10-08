@@ -23,10 +23,10 @@ class ImageSettings:
     target_bitrate: int = 400_000
     """H.264 目標位元率（每秒位元數）。約 400 kbps 可支援 360p@20fps 且避免 libx264 初始化失敗。"""
 
-    keyframe_interval: int = 30
+    keyframe_interval: int = 60
     """每隔多少幀強制產生一次關鍵幀（I-Frame）。30 代表約 1 秒更新一次，有利串流穩定性。"""
 
-    motion_threshold: float = 6.0
+    motion_threshold: float = 25.0
     """平均灰階差異門檻（0-255）。提高到 6 可減少雜訊導致的誤判，同時保留明顯變化。"""
 
     max_idle_seconds: float = 2.0
@@ -44,7 +44,7 @@ class ImageSettings:
     wavelet_levels: int = 2
     """Wavelet 轉換層數（僅 wavelet 編碼器使用），需小於等於影像尺寸的 log2。"""
 
-    wavelet_quant: int = 30
+    wavelet_quant: int = 20
     """Wavelet 係數量化步階（僅 wavelet 編碼器使用），越大壓縮越高但細節越少。"""
 
 
