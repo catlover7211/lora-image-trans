@@ -14,13 +14,13 @@ VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg"]
 class ImageSettings:
     """影像擷取與編碼相關的預設參數。"""
 
-    width: int = 160
+    width: int = 1600
     """輸出影像寬度（像素）。維持 4:3 並控制輸出資料量。"""
 
-    height: int = 120
+    height: int = 1200
     """輸出影像高度（像素）。配合 160×120 解析度可在 115200 bps 串列埠下達成 >10fps。"""
 
-    target_bitrate: int = 120_000
+    target_bitrate: int = 100_000
     """H.264 目標位元率（每秒位元數）。經估算可讓單幀 payload 約 1.2 KB，足以在串口帶寬內維持 10 fps。"""
 
     keyframe_interval: int = 30
@@ -32,7 +32,7 @@ class ImageSettings:
     max_idle_seconds: float = 1.0
     """允許最長無傳輸的時間（秒）。最多 1 秒沒變化仍會送幀，避免畫面卡住。"""
 
-    transmit_interval: float = 0.03
+    transmit_interval: float = 0.02
     """兩幀之間的最短間隔（秒）。0.03 秒相當於 ~33 fps，上限由串口吞吐決定。"""
 
     color_mode: ColorMode = "gray"
@@ -50,13 +50,13 @@ class ImageSettings:
     use_chunk_ack: bool = True
     """是否在串流傳輸過程啟用每個 chunk 的 ACK。停用可降低延遲，但在雜訊環境下可靠度變差。"""
 
-    tx_buffer_size: int = 8
+    tx_buffer_size: int = 5
     """傳送端待發緩衝區容量（以幀為單位）。預設 8 幀可吸收暫時的串列埠延遲。"""
 
     rx_buffer_size: int = 32
     """接收端待顯示緩衝區容量。32 幀可避免主程式顯示延遲阻塞解碼。"""
 
-    jpeg_quality: int = 10
+    jpeg_quality: int = 5
     """JPEG 壓縮品質 (1-100)。預設 85 在串口頻寬下兼顧畫質與大小。"""
 
 
