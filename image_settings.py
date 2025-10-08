@@ -15,37 +15,37 @@ class ImageSettings:
     """影像擷取與編碼相關的預設參數。"""
 
     width: int = 160
-    """輸出影像寬度（像素）。維持 16:9 且兼顧畫質與編碼效率。"""
+    """輸出影像寬度（像素）。維持 4:3 並控制輸出資料量。"""
 
-    height: int = 90
-    """輸出影像高度（像素）。搭配 640x360 約等於 360p，便於在低頻寬下維持較高幀率。"""
+    height: int = 120
+    """輸出影像高度（像素）。配合 160×120 解析度可在 115200 bps 串列埠下達成 >10fps。"""
 
-    target_bitrate: int = 400_000
-    """H.264 目標位元率（每秒位元數）。約 400 kbps 可支援 360p@20fps 且避免 libx264 初始化失敗。"""
+    target_bitrate: int = 120_000
+    """H.264 目標位元率（每秒位元數）。經估算可讓單幀 payload 約 1.2 KB，足以在串口帶寬內維持 10 fps。"""
 
-    keyframe_interval: int = 60
-    """每隔多少幀強制產生一次關鍵幀（I-Frame）。30 代表約 1 秒更新一次，有利串流穩定性。"""
+    keyframe_interval: int = 30
+    """每隔多少幀強制產生一次關鍵幀（I-Frame）。30 對應約 2 秒更新一次，平衡壓縮效率與畫面恢復。"""
 
-    motion_threshold: float = 25.0
-    """平均灰階差異門檻（0-255）。提高到 6 可減少雜訊導致的誤判，同時保留明顯變化。"""
+    motion_threshold: float = 12.0
+    """平均灰階差異門檻（0-255）。設定在 12 可濾除感測器雜訊，同時保留真實位移。"""
 
-    max_idle_seconds: float = 2.0
-    """允許最長無傳輸的時間（秒）。最長 2 秒沒變化也會送幀，避免畫面停住。"""
+    max_idle_seconds: float = 1.0
+    """允許最長無傳輸的時間（秒）。最多 1 秒沒變化仍會送幀，避免畫面卡住。"""
 
-    transmit_interval: float = 0.05
-    """兩幀之間的最短間隔（秒）。0.05 約等於 20 fps，可在硬體允許下提升流暢度。"""
+    transmit_interval: float = 0.03
+    """兩幀之間的最短間隔（秒）。0.03 秒相當於 ~33 fps，上限由串口吞吐決定。"""
 
     color_mode: ColorMode = "gray"
-    """預設採用灰階輸出，可改為 'bgr' 取得彩色畫面。"""
+    """預設以灰階做運動檢測，再在編碼前轉回 BGR，兼顧壓縮與相容性。"""
 
-    codec: VideoCodec = 'wavelet'
-    """影像編碼器類型。另支援 'av1' 與 'wavelet'，須視 FFmpeg/硬體或自訂解碼器支援而定。"""
+    codec: VideoCodec = 'h264'
+    """影像編碼器類型。預設改用 H.264，因為在 160×120@120kbps 下壓縮效率最佳。"""
 
-    wavelet_levels: int = 2
-    """Wavelet 轉換層數（僅 wavelet 編碼器使用），需小於等於影像尺寸的 log2。"""
+    wavelet_levels: int = 1
+    """Wavelet 轉換層數（僅 wavelet 編碼器使用）；在 160×120 下 1 層可兼顧速度與細節。"""
 
-    wavelet_quant: int = 20
-    """Wavelet 係數量化步階（僅 wavelet 編碼器使用），越大壓縮越高但細節越少。"""
+    wavelet_quant: int = 40
+    """Wavelet 係數量化步階（僅 wavelet 編碼器使用），40 約可將單幀 payload 控制在 10 KB 內。"""
 
 
 DEFAULT_IMAGE_SETTINGS = ImageSettings()
