@@ -5,7 +5,7 @@ from typing import Optional
 
 from protocol import BAUD_RATE, FrameProtocol, auto_detect_serial_port
 
-MAX_PAYLOAD_SIZE = 128 * 1024  # 允許的最大影像資料大小（反填充後）
+MAX_PAYLOAD_SIZE = 1920 * 1080  # 允許的最大影像資料大小（反填充後）
 WINDOW_TITLE = 'Received CCTV (Press q to quit)'
 
 
