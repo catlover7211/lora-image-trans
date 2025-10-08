@@ -1,13 +1,13 @@
 import argparse
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import cv2
 import numpy as np
 import serial
 
-from h264_codec import EncodedChunk, H264Encoder
+from h264_codec import EncodedChunk, H264Encoder, VideoCodec
 from image_settings import DEFAULT_IMAGE_SETTINGS, color_conversion
 from protocol import BAUD_RATE, FrameProtocol, FrameStats, auto_detect_serial_port
 
@@ -25,7 +25,7 @@ class EncoderConfig:
     bitrate: int = IMAGE_DEFAULTS.target_bitrate
     keyframe_interval: int = IMAGE_DEFAULTS.keyframe_interval
     color_conversion: Optional[int] = color_conversion(IMAGE_DEFAULTS.color_mode)
-    codec: str = IMAGE_DEFAULTS.codec
+    codec: VideoCodec = IMAGE_DEFAULTS.codec
 
     def __post_init__(self) -> None:
         if self.width <= 0 or self.height <= 0:
@@ -154,7 +154,7 @@ def main() -> None:
                 bitrate=args.bitrate,
                 keyframe_interval=args.keyframe_interval,
                 color_conversion=color_conversion(args.color_mode),
-                codec=args.codec,
+                codec=cast(VideoCodec, args.codec),
             ),
             fps=fps_hint,
         )
