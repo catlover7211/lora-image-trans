@@ -7,7 +7,7 @@ import struct
 import time
 import zlib
 from dataclasses import dataclass
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, Optional, Protocol, Sequence, runtime_checkable
 
 import serial  # type: ignore
 
@@ -111,6 +111,17 @@ def auto_detect_serial_port() -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Frame protocol implementation
 # ---------------------------------------------------------------------------
+@runtime_checkable
+class SerialLike(Protocol):
+    timeout: Optional[float]
+
+    def write(self, data: bytes) -> int: ...
+
+    def read(self, size: int = ...) -> bytes: ...
+
+    def flush(self) -> None: ...
+
+
 class FrameProtocol:
     """Utility responsible for framing, validation, and transport orchestration."""
 
@@ -144,7 +155,7 @@ class FrameProtocol:
         for index in range(0, len(frame), self.chunk_size):
             yield frame[index:index + self.chunk_size]
 
-    def send_frame(self, ser: serial.Serial, payload: bytes) -> FrameStats:
+    def send_frame(self, ser: SerialLike, payload: bytes) -> FrameStats:
         """Send *payload* through the provided serial connection."""
         frame, stats = self.build_frame(payload)
         for chunk in self.iter_chunks(frame):
@@ -155,7 +166,7 @@ class FrameProtocol:
         return stats
 
     # -------------------------- Decoding helpers --------------------------
-    def receive_frame(self, ser: serial.Serial, *, block: bool = True) -> Optional[Frame]:
+    def receive_frame(self, ser: SerialLike, *, block: bool = True) -> Optional[Frame]:
         """Attempt to read and validate a single frame from *ser*.
 
         When *block* is False, the method returns ``None`` immediately if no
@@ -207,7 +218,7 @@ class FrameProtocol:
         return Frame(payload=payload, stats=stats)
 
     # -------------------------- Internal helpers --------------------------
-    def _await_start_marker(self, ser: serial.Serial, *, block: bool) -> bool:
+    def _await_start_marker(self, ser: SerialLike, *, block: bool) -> bool:
         while True:
             byte = ser.read(1)
             if byte == START_OF_FRAME:
@@ -217,7 +228,7 @@ class FrameProtocol:
                     continue
                 return False
 
-    def _read_exact(self, ser: serial.Serial, size: int, *, block: bool) -> Optional[bytes]:
+    def _read_exact(self, ser: SerialLike, size: int, *, block: bool) -> Optional[bytes]:
         buffer = bytearray()
         while len(buffer) < size:
             chunk = ser.read(size - len(buffer))
@@ -228,7 +239,7 @@ class FrameProtocol:
                 return None
         return bytes(buffer)
 
-    def _discard_until_end(self, ser: serial.Serial) -> None:
+    def _discard_until_end(self, ser: SerialLike) -> None:
         while True:
             byte = ser.read(1)
             if not byte or byte == END_OF_FRAME:
