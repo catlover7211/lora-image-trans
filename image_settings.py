@@ -19,8 +19,8 @@ class ImageSettings:
     height: int = 90
     """輸出影像高度（像素）。"""
 
-    target_bitrate: int = 150
-    """H.264 目標位元率（每秒位元數），數值越低代表資料量越小。"""
+    target_bitrate: int = 150_000
+    """H.264 目標位元率（每秒位元數）。實測低於 10 kbps 會導致編碼器初始化失敗。"""
 
     keyframe_interval: int = 30
     """每隔多少幀強制產生一次關鍵幀（I-Frame）。數值越大，差分壓縮越積極。"""

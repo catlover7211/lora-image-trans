@@ -44,6 +44,9 @@ class EncodedChunk:
         )
 
 
+MIN_ENCODER_BITRATE = 10_000
+
+
 class H264Encoder:
     """Encodes numpy image frames into H.264 packets."""
 
@@ -60,6 +63,11 @@ class H264Encoder:
             raise ValueError("影像尺寸必須為正整數")
         if fps <= 0:
             raise ValueError("fps 必須為正數")
+        if bitrate < MIN_ENCODER_BITRATE:
+            raise ValueError(
+                f"位元率過低 (須 >= {MIN_ENCODER_BITRATE} bps) 可能導致 libx264 無法啟動，"
+                "請提高 bitrate 或改用較低解析度/幀率。"
+            )
         self.width = width
         self.height = height
         self.fps = fps
