@@ -14,10 +14,10 @@ VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg"]
 class ImageSettings:
     """影像擷取與編碼相關的預設參數。"""
 
-    width: int = 640
+    width: int = 80
     """輸出影像寬度（像素）。維持 4:3 並控制輸出資料量。"""
 
-    height: int = 320
+    height: int = 45
     """輸出影像高度（像素）。配合 160×120 解析度可在 115200 bps 串列埠下達成 >10fps。"""
 
     target_bitrate: int = 120_000
@@ -35,7 +35,7 @@ class ImageSettings:
     transmit_interval: float = 0.03
     """兩幀之間的最短間隔（秒）。0.03 秒相當於 ~33 fps，上限由串口吞吐決定。"""
 
-    color_mode: ColorMode = "gray"
+    color_mode: ColorMode = "bgr"
     """預設以灰階做運動檢測，再在編碼前轉回 BGR，兼顧壓縮與相容性。"""
 
     codec: VideoCodec = 'jpeg'
