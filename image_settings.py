@@ -35,10 +35,10 @@ class ImageSettings:
     transmit_interval: float = 0.03
     """兩幀之間的最短間隔（秒）。0.03 秒相當於 ~33 fps，上限由串口吞吐決定。"""
 
-    color_mode: ColorMode = "bgr"
+    color_mode: ColorMode = "gray"
     """預設以灰階做運動檢測，再在編碼前轉回 BGR，兼顧壓縮與相容性。"""
 
-    codec: VideoCodec = 'jpeg'
+    codec: VideoCodec = 'h264'
     """影像編碼器類型。預設改用 H.264，因為在 160×120@120kbps 下壓縮效率最佳。"""
 
     wavelet_levels: int = 1
