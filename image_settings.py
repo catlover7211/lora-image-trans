@@ -47,7 +47,7 @@ class ImageSettings:
     wavelet_quant: int = 40
     """Wavelet 係數量化步階（僅 wavelet 編碼器使用），40 約可將單幀 payload 控制在 10 KB 內。"""
 
-    use_chunk_ack: bool = False
+    use_chunk_ack: bool = True
     """是否在串流傳輸過程啟用每個 chunk 的 ACK。停用可降低延遲，但在雜訊環境下可靠度變差。"""
 
     tx_buffer_size: int = 8
