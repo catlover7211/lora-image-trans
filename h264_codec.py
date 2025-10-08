@@ -10,7 +10,7 @@ import numpy as np
 from av.packet import Packet
 from av.video.frame import PictureType
 
-VideoCodec = Literal["h264", "h265"]
+VideoCodec = Literal["h264", "h265", "av1"]
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,7 @@ class EncodedChunk:
     FLAG_KEYFRAME = 0x01
     FLAG_CONFIG = 0x02
     FLAG_CODEC_HEVC = 0x04
+    FLAG_CODEC_AV1 = 0x08
 
     def to_payload(self) -> bytes:
         """Convert the chunk into a protocol payload with a flag prefix."""
@@ -35,6 +36,8 @@ class EncodedChunk:
             flags |= self.FLAG_CONFIG
         if self.codec == "h265":
             flags |= self.FLAG_CODEC_HEVC
+        elif self.codec == "av1":
+            flags |= self.FLAG_CODEC_AV1
         return bytes((flags,)) + self.data
 
     @classmethod
@@ -43,7 +46,12 @@ class EncodedChunk:
             raise ValueError("payload 不可為空")
         flags = payload[0]
         data = payload[1:]
-        codec: VideoCodec = "h265" if flags & cls.FLAG_CODEC_HEVC else "h264"
+        if flags & cls.FLAG_CODEC_AV1:
+            codec: VideoCodec = "av1"
+        elif flags & cls.FLAG_CODEC_HEVC:
+            codec = "h265"
+        else:
+            codec = "h264"
         return cls(
             data=data,
             codec=codec,
@@ -56,7 +64,7 @@ MIN_ENCODER_BITRATE = 10_000
 
 
 class H264Encoder:
-    """Encodes numpy image frames into H.264 or H.265 packets."""
+    """Encodes numpy image frames into H.264/H.265/AV1 packets."""
 
     def __init__(
         self,
@@ -83,8 +91,15 @@ class H264Encoder:
         self.fps = fps
         self.codec_name: VideoCodec = codec
 
-        encoder_name = "libx265" if codec == "h265" else "libx264"
-        fallback_name = "hevc" if codec == "h265" else "h264"
+        if codec == "h265":
+            encoder_name = "libx265"
+            fallback_name = "hevc"
+        elif codec == "av1":
+            encoder_name = "libaom-av1"
+            fallback_name = "av1"
+        else:
+            encoder_name = "libx264"
+            fallback_name = "h264"
         try:
             codec_ctx: Any = av.CodecContext.create(encoder_name, "w")
         except Exception:
@@ -117,6 +132,19 @@ class H264Encoder:
                 "preset": "veryfast",
                 "tune": "zerolatency",
                 "x265-params": x265_params,
+            }
+        elif codec == "av1":
+            codec_ctx.options = {
+                "cpu-used": "8",
+                "end-usage": "cbr",
+                "lag-in-frames": "0",
+                "row-mt": "1",
+                "tile-columns": "0",
+                "tile-rows": "0",
+                "enable-cdef": "1",
+                "usage": "realtime",
+                "kf-max-dist": str(gop_size),
+                "kf-min-dist": str(gop_size),
             }
         else:
             codec_ctx.options = {
@@ -192,7 +220,7 @@ class H264Encoder:
 
 
 class H264Decoder:
-    """Decodes H.264 or H.265 payloads back into numpy image frames."""
+    """Decodes H.264/H.265/AV1 payloads back into numpy image frames."""
 
     def __init__(self) -> None:
         self.codec: Optional[Any] = None
@@ -202,8 +230,22 @@ class H264Decoder:
         if self.codec is not None and self._codec_name == codec_name:
             return self.codec
 
-        decode_name = "hevc" if codec_name == "h265" else "h264"
-        context: Any = av.CodecContext.create(decode_name, "r")
+        if codec_name == "h265":
+            decode_candidates = ("hevc", "h265")
+        elif codec_name == "av1":
+            decode_candidates = ("av1", "libaom-av1")
+        else:
+            decode_candidates = ("h264",)
+
+        context: Optional[Any] = None
+        for name in decode_candidates:
+            try:
+                context = av.CodecContext.create(name, "r")
+                break
+            except Exception:
+                continue
+        if context is None:
+            raise RuntimeError(f"無法建立 {codec_name} 解碼器，請確認 FFmpeg 支援 {codec_name}。")
         context.options = {"refcounted_frames": "0"}
         context.open()
 
@@ -212,7 +254,7 @@ class H264Decoder:
         return context
 
     def decode(self, chunk: EncodedChunk) -> Iterable[np.ndarray]:
-        codec_name: VideoCodec = "h265" if chunk.codec == "h265" else "h264"
+        codec_name: VideoCodec = chunk.codec
         context = self._open_codec(codec_name)
 
         if chunk.is_config:
@@ -221,7 +263,11 @@ class H264Decoder:
 
         packet = Packet(chunk.data)
         frames = []
-        for frame in context.decode(packet):
+        try:
+            decoded_iter = context.decode(packet)
+        except Exception as exc:
+            raise RuntimeError(f"解碼 {codec_name} 影像失敗: {exc}") from exc
+        for frame in decoded_iter:
             frames.append(frame.to_ndarray(format="bgr24"))
         return frames
 
@@ -230,6 +276,10 @@ class H264Decoder:
             return []
 
         frames = []
-        for frame in self.codec.decode(None):
+        try:
+            decoded_iter = self.codec.decode(None)
+        except Exception as exc:
+            raise RuntimeError(f"解碼 {self._codec_name or 'unknown'} 影像失敗: {exc}") from exc
+        for frame in decoded_iter:
             frames.append(frame.to_ndarray(format="bgr24"))
         return frames

@@ -70,7 +70,13 @@ def main() -> None:
                 current_codec = chunk.codec
                 print(f"收到編碼器設定: {current_codec.upper()} (extradata {len(chunk.data)} bytes)")
 
-            decoded_frames = list(decoder.decode(chunk))
+            try:
+                decoded_frames = list(decoder.decode(chunk))
+            except RuntimeError as exc:
+                print(f"解碼失敗: {exc}")
+                pending_stats.clear()
+                pending_fragments = 0
+                continue
 
             if not decoded_frames:
                 continue

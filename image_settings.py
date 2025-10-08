@@ -7,7 +7,7 @@ from typing import Literal, Optional
 import cv2
 
 ColorMode = Literal["gray", "bgr"]
-VideoCodec = Literal["h264", "h265"]
+VideoCodec = Literal["h264", "h265", "av1"]
 
 
 @dataclass(frozen=True)
@@ -38,8 +38,8 @@ class ImageSettings:
     color_mode: ColorMode = "gray"
     """預設採用灰階輸出，可改為 'bgr' 取得彩色畫面。"""
 
-    codec: VideoCodec = 'h264'
-    """影像編碼器類型。'h265' (HEVC) 提供更佳壓縮效率，但計算量較高，必要時可改回 'h264'。"""
+    codec: VideoCodec = 'av1'
+    """影像編碼器類型。另支援 'av1' 取得更高壓縮率（但需相容的 FFmpeg/硬體）。"""
 
 
 DEFAULT_IMAGE_SETTINGS = ImageSettings()
