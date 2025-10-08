@@ -98,6 +98,7 @@ class FrameProtocol:
         use_chunk_ack: bool = False,
         ack_timeout: float = DEFAULT_ACK_TIMEOUT,
         initial_skip_acks: int = DEFAULT_INITIAL_ACK_SKIP,
+        lenient: bool = False,
     ) -> None:
         if chunk_size <= 0:
             raise ValueError("chunk_size 必須為正整數")
@@ -111,6 +112,8 @@ class FrameProtocol:
         self._acks_to_skip = max(0, initial_skip_acks)
         self._ack_established = False
         self._last_error: Optional[str] = None
+        self._pending_ascii: bytearray = bytearray()
+        self._lenient = lenient
 
     # -------------------------- Encoding helpers --------------------------
     def build_frame(self, payload: bytes) -> tuple[bytes, FrameStats]:
@@ -194,8 +197,16 @@ class FrameProtocol:
             return None
 
         if encoded_length != len(encoded):
-            self._last_error = f"長度不符，宣告 {encoded_length} 實際 {len(encoded)}"
-            return None
+            if encoded_length < len(encoded):
+                overflow = encoded[encoded_length:]
+                encoded = encoded[:encoded_length]
+                self._pending_ascii[:0] = overflow.encode("ascii")
+            msg = f"長度不符，宣告 {encoded_length} 實際 {len(encoded)}"
+            if not self._lenient:
+                self._last_error = msg
+                return None
+            self._last_error = msg + " (lenient: 繼續嘗試解碼)"
+            encoded_length = len(encoded)
 
         if encoded_length > self.max_encoded_size:
             self._last_error = "編碼資料超過上限"
@@ -223,8 +234,11 @@ class FrameProtocol:
 
         crc = zlib.crc32(payload) & 0xFFFFFFFF
         if crc != expected_crc:
-            self._last_error = "CRC 驗證失敗"
-            return None
+            msg = "CRC 驗證失敗"
+            if not self._lenient:
+                self._last_error = msg
+                return None
+            self._last_error = msg + " (lenient: 忽略驗證)"
 
         stats = FrameStats(
             payload_size=len(payload),
@@ -252,27 +266,29 @@ class FrameProtocol:
             time.sleep(0.001)
 
     def _read_line(self, ser: SerialLike, *, block: bool) -> Optional[bytes]:
-        buffer = bytearray()
         bytes_since_ack = 0
         while True:
+            newline_index = self._pending_ascii.find(b"\n")
+            if newline_index != -1:
+                line = bytes(self._pending_ascii[:newline_index + 1])
+                del self._pending_ascii[:newline_index + 1]
+                if self.use_chunk_ack and bytes_since_ack > 0:
+                    ser.write(ACK_MESSAGE)
+                    ser.flush()
+                    bytes_since_ack = 0
+                return line
             chunk = ser.read(1)
             if chunk:
-                buffer.extend(chunk)
+                self._pending_ascii.extend(chunk)
                 if self.use_chunk_ack:
                     bytes_since_ack += 1
                     if bytes_since_ack >= self.chunk_size:
                         ser.write(ACK_MESSAGE)
                         ser.flush()
                         bytes_since_ack = 0
-                if chunk == b"\n":
-                    if self.use_chunk_ack and bytes_since_ack > 0:
-                        ser.write(ACK_MESSAGE)
-                        ser.flush()
-                        bytes_since_ack = 0
-                    return bytes(buffer)
-                if len(buffer) > self.max_encoded_size + 64:
-                    # Prevent unbounded growth in case of malformed stream
+                if len(self._pending_ascii) > self.max_encoded_size + 64:
                     self._last_error = "資料行過長"
+                    self._pending_ascii.clear()
                     return None
                 continue
             if not block:

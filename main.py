@@ -22,6 +22,7 @@ def parse_args() -> argparse.Namespace:
     ack_group.add_argument('--ack', action='store_true', help='強制啟用 chunk 級 ACK。需與傳送端一致。')
     ack_group.add_argument('--no-ack', action='store_true', help='強制停用 chunk 級 ACK。需與傳送端一致。')
     parser.add_argument('--rx-buffer', type=int, default=DEFAULT_RX_BUFFER, help='接收端佇列容量 (幀數，預設: %(default)s)')
+    parser.add_argument('--lenient', action='store_true', help='寬鬆模式：忽略部分長度/CRC 驗證，盡量嘗試解碼。')
     return parser.parse_args()
 
 
@@ -60,6 +61,7 @@ def main() -> None:
     protocol = FrameProtocol(
         max_payload_size=MAX_PAYLOAD_SIZE,
         use_chunk_ack=use_chunk_ack,
+        lenient=args.lenient,
     )
     decoder = H264Decoder()
 
@@ -70,6 +72,7 @@ def main() -> None:
     pending_fragments = 0
 
     print(f"串流 ACK 模式: {'啟用' if use_chunk_ack else '停用'}")
+    print(f"接收容錯模式: {'寬鬆' if args.lenient else '嚴格'}")
     print("已連接序列埠，開始等待接收影像...")
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")
 
