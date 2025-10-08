@@ -1,9 +1,9 @@
 import cv2
-import numpy as np
 import serial
 from typing import Optional
 
-from protocol import BAUD_RATE, FrameProtocol, auto_detect_serial_port
+from h264_codec import EncodedChunk, H264Decoder
+from protocol import BAUD_RATE, FrameProtocol, FrameStats, auto_detect_serial_port
 
 MAX_PAYLOAD_SIZE = 1920 * 1080  # 允許的最大影像資料大小（反填充後）
 WINDOW_TITLE = 'Received CCTV (Press q to quit)'
@@ -28,14 +28,6 @@ def open_serial_connection() -> Optional[serial.Serial]:
     return ser
 
 
-def decode_frame(payload: bytes) -> Optional[np.ndarray]:
-    """將 JPEG 位元串解碼為灰階影像。"""
-    if not payload:
-        return None
-    np_arr = np.frombuffer(payload, np.uint8)
-    return cv2.imdecode(np_arr, cv2.IMREAD_GRAYSCALE)
-
-
 def main() -> None:
     """主函式，用於從序列埠接收、解碼並顯示影像。"""
     ser = open_serial_connection()
@@ -43,6 +35,9 @@ def main() -> None:
         return
 
     protocol = FrameProtocol(max_payload_size=MAX_PAYLOAD_SIZE, use_chunk_ack=True)
+    decoder = H264Decoder()
+    pending_stats: list[FrameStats] = []
+    pending_fragments = 0
 
     print("已連接序列埠，開始等待接收影像...")
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")
@@ -51,26 +46,44 @@ def main() -> None:
 
     try:
         while True:
-            frame = protocol.receive_frame(ser, block=True)
-            if frame is None:
+            framed = protocol.receive_frame(ser, block=True)
+            if framed is None:
                 error = protocol.last_error
                 if error and error != last_error_reported:
                     print(f"接收失敗: {error}")
                     last_error_reported = error
                 continue
 
-            if frame.stats.payload_size == 0:
-                print("警告: 收到空白幀，忽略。")
+            pending_stats.append(framed.stats)
+            pending_fragments += 1
+
+            try:
+                chunk = EncodedChunk.from_payload(framed.payload)
+            except ValueError as exc:
+                print(f"接收失敗: {exc}")
+                pending_stats.clear()
+                pending_fragments = 0
                 continue
 
-            image = decode_frame(frame.payload)
+            decoded_frames = list(decoder.decode(chunk))
+
+            if not decoded_frames:
+                continue
+
+            total_payload = sum(stat.payload_size for stat in pending_stats)
+            total_ascii = sum(stat.stuffed_size for stat in pending_stats)
+            fragment_count = pending_fragments
+            pending_stats.clear()
+            pending_fragments = 0
+
+            image = decoded_frames[-1]
             if image is None:
                 print("錯誤: 無法解碼影像。資料可能已損毀。")
                 continue
 
             print(
-                f"成功接收並解碼一幀影像，原始大小: {frame.stats.payload_size} bytes, "
-                f"ASCII 編碼大小: {frame.stats.stuffed_size} bytes, CRC: {frame.stats.crc:08x}"
+                f"成功接收並解碼一幀影像，封包大小: {total_payload} bytes, "
+                f"ASCII 編碼大小: {total_ascii} bytes, 分片數: {fragment_count}"
             )
 
             last_error_reported = None

@@ -6,6 +6,7 @@ from typing import Any, Optional
 import cv2
 import serial
 
+from h264_codec import EncodedChunk, H264Encoder
 from protocol import BAUD_RATE, FrameProtocol, FrameStats, auto_detect_serial_port
 
 
@@ -42,21 +43,31 @@ class TransmissionConfig:
 
 
 class FrameEncoder:
-    """負責影像預處理與 JPEG 編碼。"""
+    """負責影像預處理與 H.264 編碼。"""
 
-    def __init__(self, config: EncoderConfig) -> None:
+    def __init__(self, config: EncoderConfig, *, fps: float, keyframe_interval: int = 60) -> None:
         self.config = config
-        self._encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.config.quality]
+        self.encoder = H264Encoder(
+            width=config.width,
+            height=config.height,
+            fps=fps,
+            keyframe_interval=max(1, keyframe_interval),
+        )
 
-    def encode(self, frame: Any) -> tuple[bytes, Any]:
+    def encode(self, frame: Any) -> tuple[list[EncodedChunk], Any, int]:
         processed = frame
         if self.config.color_conversion is not None:
             processed = cv2.cvtColor(processed, self.config.color_conversion)
         resized = cv2.resize(processed, (self.config.width, self.config.height), interpolation=cv2.INTER_AREA)
-        success, encoded = cv2.imencode('.jpg', resized, self._encode_param)
-        if not success:
-            raise ValueError('無法將影像編碼為 JPEG。')
-        return encoded.tobytes(), resized
+
+        if resized.ndim == 2:
+            bgr_frame = cv2.cvtColor(resized, cv2.COLOR_GRAY2BGR)
+        else:
+            bgr_frame = resized
+
+        chunks = self.encoder.encode(bgr_frame)
+        raw_size = bgr_frame.size * bgr_frame.itemsize
+        return chunks, resized, raw_size
 
 
 class FrameTransmitter:
@@ -115,6 +126,10 @@ def main() -> None:
     """主流程：擷取影像、編碼並透過序列埠傳送。"""
     args = parse_args()
 
+    fps_hint = 30.0
+    if args.interval > 0:
+        fps_hint = max(1.0, 1.0 / args.interval)
+
     try:
         encoder = FrameEncoder(
             EncoderConfig(
@@ -122,7 +137,9 @@ def main() -> None:
                 height=args.height,
                 quality=args.quality,
                 color_conversion=None if args.color_mode == 'bgr' else cv2.COLOR_BGR2GRAY,
-            )
+            ),
+            fps=fps_hint,
+            keyframe_interval=max(int(round(fps_hint * 2)), 1),
         )
     except ValueError as exc:
         print(f'無效的編碼參數: {exc}')
@@ -165,13 +182,27 @@ def main() -> None:
                 break
 
             try:
-                payload, preview_frame = encoder.encode(frame)
+                chunks, preview_frame, raw_size = encoder.encode(frame)
             except ValueError as exc:
                 print(f'影像處理失敗: {exc}')
                 continue
 
+            if not chunks:
+                continue
+
+            encoded_size = 0
+            framed_size = 0
+            ascii_size = 0
+            chunks_sent = 0
+
             try:
-                stats = transmitter.send(payload)
+                for chunk in chunks:
+                    payload = chunk.to_payload()
+                    encoded_size += len(chunk.data)
+                    framed_size += len(payload)
+                    stats = transmitter.send(payload)
+                    ascii_size += stats.stuffed_size
+                    chunks_sent += 1
             except (serial.SerialException, TimeoutError) as exc:
                 print(f'序列埠寫入錯誤: {exc}')
                 break
@@ -180,9 +211,9 @@ def main() -> None:
             elapsed = time.monotonic() - loop_start
             fps = frame_counter / elapsed if elapsed > 0 else 0.0
             print(
-                f'成功傳送一幀影像，原始大小: {stats.payload_size} bytes, '
-                f'ASCII 編碼大小: {stats.stuffed_size} bytes, CRC: {stats.crc:08x}, '
-                f'平均頻率: {fps:.2f} fps'
+                f'成功傳送一幀影像，原始估計大小: {raw_size} bytes, '
+                f'H.264 編碼大小: {encoded_size} bytes, 封裝後大小: {framed_size} bytes, '
+                f'ASCII 編碼大小: {ascii_size} bytes, 分片數: {chunks_sent}, 平均頻率: {fps:.2f} fps'
             )
 
             #cv2.imshow(WINDOW_TITLE, preview_frame)

@@ -4,9 +4,10 @@
 
 ## 專案結構
 
-- `capture.py`：發送端。負責擷取攝影機影像、編碼成 JPEG，並透過自訂幀協定傳送。
-- `main.py`：接收端。從序列埠讀取幀資料、驗證 CRC32、解碼 JPEG 並顯示畫面。
-- `protocol.py`：共享的幀協定工具，包含位元組填充、CRC 驗證與序列幀讀寫邏輯。
+- `capture.py`：發送端。擷取攝影機影像、以 H.264 編碼並透過自訂幀協定傳送。
+- `main.py`：接收端。從序列埠讀取幀資料、驗證 CRC32、解碼 H.264 並顯示畫面。
+- `protocol.py`：共享的幀協定工具，負責 ASCII 封包、CRC 驗證、分段 ACK 與降級處理。
+- `h264_codec.py`：封裝 PyAV 的 H.264 編碼與解碼流程。
 - `tests/test_protocol.py`：簡單的單元測試，確保幀協定的基本行為正確。
 
 ## 需求
@@ -15,11 +16,12 @@
 - OpenCV (`opencv-python`)
 - PySerial (`pyserial`)
 - NumPy (`numpy`)
+- PyAV (`av`) — 需系統已安裝 FFmpeg/Libx264
 
 可使用 `pip` 安裝：
 
 ```bash
-python -m pip install opencv-python numpy pyserial
+python -m pip install opencv-python numpy pyserial av
 ```
 
 ## 使用方式
@@ -46,5 +48,5 @@ python -m unittest tests/test_protocol.py
 ## 注意事項
 
 - 預設會自動偵測第一個可用的序列埠。若環境中有多個裝置，可依需求調整 `protocol.auto_detect_serial_port`。
-- 影像預設縮放為 `80x60` 並以低品質 JPEG 壓縮，以降低傳輸負載。可依硬體能力調整 `capture.py` 中的設定。
-- 協定採用位元組填充與 CRC32 校驗，避免控制碼衝突並提高傳輸可靠度。
+- 影像預設縮放後以 H.264 編碼，透過 P-frame 只回傳變動內容，並定期插入 I-frame 以保持同步。
+- 協定採用 ASCII 框架與 CRC32 校驗，並支援逐段 ACK（初始階段可自動降級為無 ACK 模式，以防止接收端尚未就緒時阻塞）。
