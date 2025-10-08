@@ -33,7 +33,7 @@ class LoopbackSerial:
 
 class FrameProtocolTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.protocol = FrameProtocol(inter_chunk_delay=0, chunk_size=32)
+        self.protocol = FrameProtocol(inter_chunk_delay=0, chunk_size=32, ack_timeout=0)
         self.loopback = LoopbackSerial()
 
     def test_byte_stuff_roundtrip(self) -> None:

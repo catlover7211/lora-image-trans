@@ -6,7 +6,13 @@ from typing import Any, Optional
 import cv2
 import serial
 
-from protocol import BAUD_RATE, FrameProtocol, FrameStats, auto_detect_serial_port
+from protocol import (
+    BAUD_RATE,
+    AckTimeoutError,
+    FrameProtocol,
+    FrameStats,
+    auto_detect_serial_port,
+)
 
 
 DEFAULT_FRAME_WIDTH = 80
@@ -74,20 +80,24 @@ class FrameTransmitter:
             remaining = self.config.interval - elapsed
             if remaining > 0:
                 time.sleep(remaining)
-        
+
+        last_error: Optional[Exception] = None
+
         for attempt in range(max_retries + 1):
             try:
                 stats = self.protocol.send_frame(self.serial_port, payload)
-                if self.protocol.wait_for_ack(self.serial_port, timeout=2.0):
-                    self._last_sent = time.monotonic()
-                    return stats
-                else:
-                    print(f"警告: 未收到 ACK，重試 {attempt + 1}/{max_retries + 1}")
-            except Exception as e:
-                print(f"發送失敗: {e}，重試 {attempt + 1}/{max_retries + 1}")
-                time.sleep(0.1)  # 短暫延遲
-        
-        raise ValueError(f"發送失敗，未收到 ACK，重試 {max_retries + 1} 次")
+                self._last_sent = time.monotonic()
+                return stats
+            except AckTimeoutError as exc:
+                last_error = exc
+                print(f"警告: 未收到 ACK，重試 {attempt + 1}/{max_retries + 1}")
+            except serial.SerialException as exc:
+                last_error = exc
+                print(f"序列埠發送錯誤: {exc}，重試 {attempt + 1}/{max_retries + 1}")
+
+            time.sleep(0.1)
+
+        raise ValueError(f"發送失敗，未收到 ACK，重試 {max_retries + 1} 次") from last_error
 
 
 def parse_args() -> argparse.Namespace:
