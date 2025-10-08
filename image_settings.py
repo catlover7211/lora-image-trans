@@ -44,7 +44,7 @@ class ImageSettings:
     wavelet_levels: int = 2
     """Wavelet 轉換層數（僅 wavelet 編碼器使用），需小於等於影像尺寸的 log2。"""
 
-    wavelet_quant: int = 12
+    wavelet_quant: int = 30
     """Wavelet 係數量化步階（僅 wavelet 編碼器使用），越大壓縮越高但細節越少。"""
 
 
