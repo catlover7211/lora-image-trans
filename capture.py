@@ -8,16 +8,11 @@ import numpy as np
 import serial
 
 from h264_codec import EncodedChunk, H264Encoder
+from image_settings import DEFAULT_IMAGE_SETTINGS, color_conversion
 from protocol import BAUD_RATE, FrameProtocol, FrameStats, auto_detect_serial_port
 
 
-DEFAULT_FRAME_WIDTH = 160
-DEFAULT_FRAME_HEIGHT = 90
-DEFAULT_BANDWIDTH_BITRATE = 300_000
-DEFAULT_KEYFRAME_INTERVAL = 1
-DEFAULT_MOTION_THRESHOLD = 2.0  # 平均灰階差異 (0-255)
-DEFAULT_MAX_IDLE_SECONDS = 2.0
-DEFAULT_TRANSMIT_INTERVAL = 10.0
+IMAGE_DEFAULTS = DEFAULT_IMAGE_SETTINGS
 DEFAULT_CAMERA_INDEX = 0
 DEFAULT_SERIAL_TIMEOUT = 1.0
 WINDOW_TITLE = 'CCTV Preview (Press q to quit)'
@@ -25,11 +20,11 @@ WINDOW_TITLE = 'CCTV Preview (Press q to quit)'
 
 @dataclass(frozen=True)
 class EncoderConfig:
-    width: int = DEFAULT_FRAME_WIDTH
-    height: int = DEFAULT_FRAME_HEIGHT
-    bitrate: int = DEFAULT_BANDWIDTH_BITRATE
-    keyframe_interval: int = DEFAULT_KEYFRAME_INTERVAL
-    color_conversion: Optional[int] = cv2.COLOR_BGR2GRAY
+    width: int = IMAGE_DEFAULTS.width
+    height: int = IMAGE_DEFAULTS.height
+    bitrate: int = IMAGE_DEFAULTS.target_bitrate
+    keyframe_interval: int = IMAGE_DEFAULTS.keyframe_interval
+    color_conversion: Optional[int] = color_conversion(IMAGE_DEFAULTS.color_mode)
 
     def __post_init__(self) -> None:
         if self.width <= 0 or self.height <= 0:
@@ -42,7 +37,7 @@ class EncoderConfig:
 
 @dataclass(frozen=True)
 class TransmissionConfig:
-    interval: float = DEFAULT_TRANSMIT_INTERVAL
+    interval: float = IMAGE_DEFAULTS.transmit_interval
 
     def __post_init__(self) -> None:
         if self.interval < 0:
@@ -105,15 +100,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Capture webcam frames and transmit them over serial.')
     parser.add_argument('--port', help='指定序列埠，預設會自動偵測。')
     parser.add_argument('--camera-index', type=int, default=DEFAULT_CAMERA_INDEX, help='攝影機索引 (預設: %(default)s)')
-    parser.add_argument('--width', type=int, default=DEFAULT_FRAME_WIDTH, help='輸出影像寬度 (預設: %(default)s)')
-    parser.add_argument('--height', type=int, default=DEFAULT_FRAME_HEIGHT, help='輸出影像高度 (預設: %(default)s)')
-    parser.add_argument('--color-mode', choices=('gray', 'bgr'), default='gray', help='影像編碼顏色模式 (預設: %(default)s)')
-    parser.add_argument('--interval', type=float, default=DEFAULT_TRANSMIT_INTERVAL, help='幀與幀之間的最小秒數 (預設: %(default)s)')
+    parser.add_argument('--width', type=int, default=IMAGE_DEFAULTS.width, help='輸出影像寬度 (預設: %(default)s)')
+    parser.add_argument('--height', type=int, default=IMAGE_DEFAULTS.height, help='輸出影像高度 (預設: %(default)s)')
+    parser.add_argument('--color-mode', choices=('gray', 'bgr'), default=IMAGE_DEFAULTS.color_mode, help='影像編碼顏色模式 (預設: %(default)s)')
+    parser.add_argument('--interval', type=float, default=IMAGE_DEFAULTS.transmit_interval, help='幀與幀之間的最小秒數 (預設: %(default)s)')
     parser.add_argument('--serial-timeout', type=float, default=DEFAULT_SERIAL_TIMEOUT, help='序列埠 timeout 秒數 (預設: %(default)s)')
-    parser.add_argument('--bitrate', type=int, default=DEFAULT_BANDWIDTH_BITRATE, help='H.264 目標位元率 (bps，預設: %(default)s)')
-    parser.add_argument('--keyframe-interval', type=int, default=DEFAULT_KEYFRAME_INTERVAL, help='關鍵幀間隔 (預設: %(default)s)')
-    parser.add_argument('--motion-threshold', type=float, default=DEFAULT_MOTION_THRESHOLD, help='平均灰階變化門檻，低於此值則跳過傳送 (負值表示停用，預設: %(default)s)')
-    parser.add_argument('--max-idle', type=float, default=DEFAULT_MAX_IDLE_SECONDS, help='允許最長未送出秒數，超過則強制送一幀 (<=0 表示不限，預設: %(default)s)')
+    parser.add_argument('--bitrate', type=int, default=IMAGE_DEFAULTS.target_bitrate, help='H.264 目標位元率 (bps，預設: %(default)s)')
+    parser.add_argument('--keyframe-interval', type=int, default=IMAGE_DEFAULTS.keyframe_interval, help='關鍵幀間隔 (預設: %(default)s)')
+    parser.add_argument('--motion-threshold', type=float, default=IMAGE_DEFAULTS.motion_threshold, help='平均灰階變化門檻，低於此值則跳過傳送 (負值表示停用，預設: %(default)s)')
+    parser.add_argument('--max-idle', type=float, default=IMAGE_DEFAULTS.max_idle_seconds, help='允許最長未送出秒數，超過則強制送一幀 (<=0 表示不限，預設: %(default)s)')
     return parser.parse_args()
 
 
@@ -151,7 +146,7 @@ def main() -> None:
                 height=args.height,
                 bitrate=args.bitrate,
                 keyframe_interval=args.keyframe_interval,
-                color_conversion=None if args.color_mode == 'bgr' else cv2.COLOR_BGR2GRAY,
+                color_conversion=color_conversion(args.color_mode),
             ),
             fps=fps_hint,
         )
