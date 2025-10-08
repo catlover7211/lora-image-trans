@@ -19,11 +19,11 @@ FRAME_PREFIX = "FRAME"
 FIELD_SEPARATOR = " "
 LINE_TERMINATOR = "\n"
 DEFAULT_CHUNK_SIZE = 240
-DEFAULT_INTER_CHUNK_DELAY = 0.001  # seconds
+DEFAULT_INTER_CHUNK_DELAY = 0.01  # seconds
 DEFAULT_MAX_PAYLOAD_SIZE = 1920 * 1080  # 128 KB (raw payload)
 ACK_MESSAGE = b"ACK\n"
 DEFAULT_ACK_TIMEOUT = 0.5
-DEFAULT_INITIAL_ACK_SKIP = 0
+DEFAULT_INITIAL_ACK_SKIP = 1
 
 
 # ---------------------------------------------------------------------------

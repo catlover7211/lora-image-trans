@@ -59,6 +59,7 @@ class TransmissionConfig:
     interval: float = IMAGE_DEFAULTS.transmit_interval
     buffer_size: int = IMAGE_DEFAULTS.tx_buffer_size
     use_ack: bool = IMAGE_DEFAULTS.use_chunk_ack
+    initial_ack_skip: int = 1
 
     def __post_init__(self) -> None:
         if self.interval < 0:
@@ -67,6 +68,8 @@ class TransmissionConfig:
             raise ValueError('緩衝區容量必須為正整數。')
         if not isinstance(self.use_ack, bool):
             raise ValueError('use_ack 必須為布林值。')
+        if self.initial_ack_skip < 0:
+            raise ValueError('initial_ack_skip 不得為負數。')
 
 
 class FrameEncoder:
@@ -193,6 +196,7 @@ def main() -> None:
         use_chunk_ack = True
     elif args.no_ack:
         use_chunk_ack = False
+    initial_ack_skip = 1 if use_chunk_ack else 0
 
     try:
         encoder = FrameEncoder(
@@ -217,6 +221,7 @@ def main() -> None:
             interval=max(args.interval, 0.0),
             buffer_size=max(args.tx_buffer, 1),
             use_ack=use_chunk_ack,
+            initial_ack_skip=initial_ack_skip,
         )
     except ValueError as exc:
         print(f'無效的傳輸參數: {exc}')
@@ -241,7 +246,7 @@ def main() -> None:
     protocol = FrameProtocol(
         use_chunk_ack=transmitter_config.use_ack,
         ack_timeout=max(args.serial_timeout, 0.0),
-        initial_skip_acks=1,
+        initial_skip_acks=transmitter_config.initial_ack_skip,
     )
     transmitter = FrameTransmitter(ser, protocol=protocol, config=transmitter_config)
 
