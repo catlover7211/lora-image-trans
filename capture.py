@@ -62,6 +62,8 @@ class FrameEncoder:
 
     def force_keyframe(self) -> None:
         self.encoder.force_keyframe()
+        if hasattr(self.encoder, "force_config_repeat"):
+            self.encoder.force_config_repeat()
 
     def encode(self, frame: Any) -> tuple[list[EncodedChunk], Any, int]:
         processed = frame

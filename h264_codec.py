@@ -158,7 +158,8 @@ class H264Encoder:
 
         self.keyframe_interval = gop_size
         self._frame_index = 0
-        self._config_sent = False
+        self._config_burst = 3  # how many upcoming frames should resend config
+        self._force_config = True
 
     def encode(self, frame_bgr: np.ndarray) -> List[EncodedChunk]:
         """Encode a BGR frame and return zero or more codec chunks."""
@@ -169,7 +170,11 @@ class H264Encoder:
 
         chunks: List[EncodedChunk] = []
 
-        if not self._config_sent and self.codec.extradata:
+        is_keyframe_due = (self._frame_index % self.keyframe_interval == 0)
+        if is_keyframe_due:
+            self._force_config = True
+
+        if self.codec.extradata and (self._force_config or self._config_burst > 0):
             chunks.append(
                 EncodedChunk(
                     data=self.codec.extradata,
@@ -178,10 +183,12 @@ class H264Encoder:
                     is_keyframe=True,
                 )
             )
-            self._config_sent = True
+            if self._config_burst > 0:
+                self._config_burst -= 1
+            self._force_config = False
 
         video_frame = av.VideoFrame.from_ndarray(frame_bgr, format="bgr24")
-        if self._frame_index % self.keyframe_interval == 0:
+        if is_keyframe_due:
             try:
                 video_frame.pict_type = PictureType.I
             except (AttributeError, TypeError):
@@ -217,6 +224,13 @@ class H264Encoder:
     def force_keyframe(self) -> None:
         """Request the next frame to be encoded as a keyframe."""
         self._frame_index = 0
+        self._force_config = True
+        self._config_burst = max(self._config_burst, 1)
+
+    def force_config_repeat(self, count: int = 3) -> None:
+        """Schedule codec configuration to be resent for upcoming frames."""
+        self._force_config = True
+        self._config_burst = max(self._config_burst, count)
 
 
 class H264Decoder:
