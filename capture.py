@@ -9,7 +9,7 @@ import serial
 from protocol import BAUD_RATE, FrameProtocol, FrameStats, auto_detect_serial_port
 
 
-DEFAULT_FRAME_WIDTH = 160
+DEFAULT_FRAME_WIDTH = 128
 DEFAULT_FRAME_HEIGHT = 90
 DEFAULT_JPEG_QUALITY = 5
 DEFAULT_TRANSMIT_INTERVAL = 1.0
