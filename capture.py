@@ -181,9 +181,9 @@ def main() -> None:
                 f'平均頻率: {fps:.2f} fps'
             )
 
-            cv2.imshow(WINDOW_TITLE, preview_frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            #cv2.imshow(WINDOW_TITLE, preview_frame)
+            #if cv2.waitKey(1) & 0xFF == ord('q'):
+            #    break
 
     except KeyboardInterrupt:
         print('\n程式被使用者中斷。')
