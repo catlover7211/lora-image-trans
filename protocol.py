@@ -87,7 +87,7 @@ def list_serial_ports() -> Sequence[str]:
     """Return a best-effort list of candidate serial port names for this OS."""
     system = platform.system()
     if system == "Windows":
-        return [f"COM{i}" for i in range(1, 257)]
+        return [f"COM{i}" for i in range(2, 257)]
     if system == "Linux":
         return [f"/dev/ttyUSB{i}" for i in range(8)] + [f"/dev/ttyACM{i}" for i in range(8)]
     if system == "Darwin":
