@@ -14,10 +14,10 @@ VideoCodec = Literal["h264", "h265"]
 class ImageSettings:
     """影像擷取與編碼相關的預設參數。"""
 
-    width: int = 64
+    width: int = 160
     """輸出影像寬度（像素）。維持 16:9 且兼顧畫質與編碼效率。"""
 
-    height: int = 36
+    height: int = 90
     """輸出影像高度（像素）。搭配 640x360 約等於 360p，便於在低頻寬下維持較高幀率。"""
 
     target_bitrate: int = 400_000
