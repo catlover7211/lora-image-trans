@@ -46,7 +46,7 @@ class TransmissionConfig:
 
 
 class FrameEncoder:
-    """負責影像預處理與 H.264 編碼。"""
+    """負責影像預處理與視訊編碼。"""
 
     def __init__(self, config: EncoderConfig, *, fps: float) -> None:
         self.config = config
@@ -195,6 +195,7 @@ def main() -> None:
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")
 
     frame_counter = 0
+    codec_label = args.codec.upper()
     loop_start = time.monotonic()
     motion_threshold = args.motion_threshold
     max_idle = max(args.max_idle, 0.0)
@@ -271,7 +272,7 @@ def main() -> None:
             fps = frame_counter / elapsed if elapsed > 0 else 0.0
             print(
                 f'成功傳送一幀影像，原始估計大小: {raw_size} bytes, '
-                f'H.264 編碼大小: {encoded_size} bytes, 封裝後大小: {framed_size} bytes, '
+                f'{codec_label} 編碼大小: {encoded_size} bytes, 封裝後大小: {framed_size} bytes, '
                 f'ASCII 編碼大小: {ascii_size} bytes, 分片數: {chunks_sent}, '
                 f'是否關鍵幀: {"是" if keyframe_sent else "否"}, '
                 f'跳過累積: {skipped_frames}, 平均頻率: {fps:.2f} fps'

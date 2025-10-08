@@ -58,4 +58,5 @@ python -m unittest tests/test_protocol.py
 
 - 預設會自動偵測第一個可用的序列埠。若環境中有多個裝置，可依需求調整 `protocol.auto_detect_serial_port`。
 - 影像預設縮放後以 H.265 編碼（可改為 H.264），利用差分幀減少資料量並定期插入 I-frame 以保持同步。
+- 若系統未安裝 libx265 或裝置效能不足，可在啟動發送端時加入 `--codec h264` 改回 H.264 以維持相容性。
 - 協定採用 ASCII 框架與 CRC32 校驗，並支援逐段 ACK（初始階段可自動降級為無 ACK 模式，以防止接收端尚未就緒時阻塞）。

@@ -102,10 +102,21 @@ class H264Encoder:
 
         gop_size = max(keyframe_interval, 1)
         if codec == "h265":
+            x265_params = ":".join(
+                [
+                    f"keyint={gop_size}",
+                    f"min-keyint={gop_size}",
+                    "scenecut=0",
+                    "bframes=0",
+                    "repeat-headers=1",
+                    "rc-lookahead=0",
+                    "frame-threads=1",
+                ]
+            )
             codec_ctx.options = {
                 "preset": "veryfast",
                 "tune": "zerolatency",
-                "x265-params": f"keyint={gop_size}:min-keyint={gop_size}:scenecut=0:bframes=0",
+                "x265-params": x265_params,
             }
         else:
             codec_ctx.options = {
