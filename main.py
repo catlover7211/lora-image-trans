@@ -69,8 +69,8 @@ def main() -> None:
                 continue
 
             print(
-                f"成功接收並解碼一幀影像，反填充大小: {frame.stats.payload_size} bytes, "
-                f"填充後大小: {frame.stats.stuffed_size} bytes, CRC: {frame.stats.crc:08x}"
+                f"成功接收並解碼一幀影像，原始大小: {frame.stats.payload_size} bytes, "
+                f"ASCII 編碼大小: {frame.stats.stuffed_size} bytes, CRC: {frame.stats.crc:08x}"
             )
 
             last_error_reported = None

@@ -1,7 +1,8 @@
+import base64
 import unittest
 from typing import Optional
 
-from protocol import FrameProtocol, stuff_bytes, unstuff_bytes
+from protocol import FIELD_SEPARATOR, FRAME_PREFIX, FrameProtocol
 
 
 class LoopbackSerial:
@@ -36,13 +37,6 @@ class FrameProtocolTest(unittest.TestCase):
         self.protocol = FrameProtocol(inter_chunk_delay=0, chunk_size=32)
         self.loopback = LoopbackSerial()
 
-    def test_byte_stuff_roundtrip(self) -> None:
-        payload = bytes([1, 27, 4, 0, 255])
-        stuffed = stuff_bytes(payload)
-        self.assertNotEqual(payload, stuffed)
-        restored = unstuff_bytes(stuffed)
-        self.assertEqual(payload, restored)
-
     def test_send_and_receive_roundtrip(self) -> None:
         payload = bytes(range(256))
         stats = self.protocol.send_frame(self.loopback, payload)
@@ -54,6 +48,21 @@ class FrameProtocolTest(unittest.TestCase):
         assert received  # for mypy / type checkers
         self.assertEqual(received.payload, payload)
         self.assertEqual(received.stats.crc, stats.crc)
+
+    def test_frame_format_ascii(self) -> None:
+        payload = b"hello world"
+        self.protocol.send_frame(self.loopback, payload)
+        frame_line = self.loopback.buffer.decode("ascii")
+        self.assertTrue(frame_line.endswith("\n"))
+        frame_line = frame_line.strip()
+        parts = frame_line.split(FIELD_SEPARATOR, 3)
+        self.assertEqual(len(parts), 4)
+        prefix, length_str, crc_str, encoded = parts
+        self.assertEqual(prefix, FRAME_PREFIX)
+        self.assertEqual(int(length_str), len(encoded))
+        decoded = base64.b64decode(encoded.encode("ascii"))
+        self.assertEqual(decoded, payload)
+        self.assertEqual(len(crc_str), 8)
 
 
 if __name__ == "__main__":

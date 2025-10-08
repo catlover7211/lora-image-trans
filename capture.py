@@ -177,7 +177,7 @@ def main() -> None:
             fps = frame_counter / elapsed if elapsed > 0 else 0.0
             print(
                 f'成功傳送一幀影像，原始大小: {stats.payload_size} bytes, '
-                f'填充後大小: {stats.stuffed_size} bytes, CRC: {stats.crc:08x}, '
+                f'ASCII 編碼大小: {stats.stuffed_size} bytes, CRC: {stats.crc:08x}, '
                 f'平均頻率: {fps:.2f} fps'
             )
 

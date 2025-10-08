@@ -1,9 +1,9 @@
-"""Shared serial video frame protocol utilities."""
+"""Shared serial video frame protocol utilities using ASCII framing."""
 from __future__ import annotations
 
+import base64
 import glob
 import platform
-import struct
 import time
 import zlib
 from dataclasses import dataclass
@@ -15,15 +15,12 @@ import serial  # type: ignore
 # Protocol constants
 # ---------------------------------------------------------------------------
 BAUD_RATE = 115_200
-START_OF_FRAME = b"\x01"  # SOH
-END_OF_FRAME = b"\x04"  # EOT
-ESC = b"\x1B"  # ESC (escape)
-HEADER_FORMAT = ">II"  # stuffed_size, crc32 (payload)
-HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+FRAME_PREFIX = "FRAME"
+FIELD_SEPARATOR = " "
+LINE_TERMINATOR = "\n"
 DEFAULT_CHUNK_SIZE = 128
 DEFAULT_INTER_CHUNK_DELAY = 0.001  # seconds
-DEFAULT_MAX_STUFFED_SIZE = 256 * 1024  # 256 KB
-DEFAULT_MAX_PAYLOAD_SIZE = 128 * 1024  # 128 KB (post unstuff)
+DEFAULT_MAX_PAYLOAD_SIZE = 128 * 1024  # 128 KB (raw payload)
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +31,7 @@ class FrameStats:
     """Metadata describing a single transmitted frame."""
 
     payload_size: int
-    stuffed_size: int
+    stuffed_size: int  # Encoded ASCII size
     crc: int
 
 
@@ -44,40 +41,6 @@ class Frame:
 
     payload: bytes
     stats: FrameStats
-
-
-# ---------------------------------------------------------------------------
-# Byte stuffing helpers
-# ---------------------------------------------------------------------------
-def stuff_bytes(data: bytes) -> bytes:
-    """Perform byte stuffing so payload doesn't collide with control markers."""
-    stuffed = bytearray()
-    for byte in data:
-        if byte == ESC[0]:
-            stuffed.extend(ESC + ESC)
-        elif byte == START_OF_FRAME[0]:
-            stuffed.extend(ESC + START_OF_FRAME)
-        elif byte == END_OF_FRAME[0]:
-            stuffed.extend(ESC + END_OF_FRAME)
-        else:
-            stuffed.append(byte)
-    return bytes(stuffed)
-
-
-def unstuff_bytes(data: bytes) -> bytes:
-    """Reverse byte stuffing applied by :func:`stuff_bytes`."""
-    unstuffed = bytearray()
-    index = 0
-    while index < len(data):
-        if data[index:index + 1] == ESC:
-            # If ESC is the final byte, we ignore it (protocol guarantee prevents this)
-            if index + 1 < len(data):
-                unstuffed.append(data[index + 1])
-            index += 2
-        else:
-            unstuffed.append(data[index])
-            index += 1
-    return bytes(unstuffed)
 
 
 # ---------------------------------------------------------------------------
@@ -128,26 +91,29 @@ class FrameProtocol:
         *,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         inter_chunk_delay: float = DEFAULT_INTER_CHUNK_DELAY,
-        max_stuffed_size: int = DEFAULT_MAX_STUFFED_SIZE,
         max_payload_size: int = DEFAULT_MAX_PAYLOAD_SIZE,
     ) -> None:
         if chunk_size <= 0:
             raise ValueError("chunk_size 必須為正整數")
         self.chunk_size = chunk_size
         self.inter_chunk_delay = max(inter_chunk_delay, 0.0)
-        self.max_stuffed_size = max_stuffed_size
         self.max_payload_size = max_payload_size
+        # Upper bound for encoded ASCII length (base64 expands ~4/3)
+        self.max_encoded_size = int(max_payload_size * 4 / 3) + 16
         self._last_error: Optional[str] = None
 
     # -------------------------- Encoding helpers --------------------------
     def build_frame(self, payload: bytes) -> tuple[bytes, FrameStats]:
-        """Construct the framed byte stream and statistics for *payload*."""
-        stuffed = stuff_bytes(payload)
+        """Construct the ASCII framed byte stream and statistics for *payload*."""
+        encoded = base64.b64encode(payload).decode("ascii")
         crc = zlib.crc32(payload) & 0xFFFFFFFF
-        header = struct.pack(HEADER_FORMAT, len(stuffed), crc)
-        frame = START_OF_FRAME + header + stuffed + END_OF_FRAME
-        stats = FrameStats(payload_size=len(payload), stuffed_size=len(stuffed), crc=crc)
-        return frame, stats
+        header = FIELD_SEPARATOR.join(
+            (FRAME_PREFIX, str(len(encoded)), f"{crc:08x}")
+        )
+        frame_str = header + FIELD_SEPARATOR + encoded + LINE_TERMINATOR
+        frame_bytes = frame_str.encode("ascii")
+        stats = FrameStats(payload_size=len(payload), stuffed_size=len(encoded), crc=crc)
+        return frame_bytes, stats
 
     def iter_chunks(self, frame: bytes) -> Iterable[bytes]:
         """Split a frame into chunks suitable for streaming over the serial port."""
@@ -155,9 +121,9 @@ class FrameProtocol:
             yield frame[index:index + self.chunk_size]
 
     def send_frame(self, ser: SerialLike, payload: bytes) -> FrameStats:
-        """Send *payload* through the provided serial connection with ACK flow control."""
-        frame, stats = self.build_frame(payload)
-        for chunk in self.iter_chunks(frame):
+        """Send *payload* through the provided serial connection."""
+        frame_bytes, stats = self.build_frame(payload)
+        for chunk in self.iter_chunks(frame_bytes):
             ser.write(chunk)
             if self.inter_chunk_delay:
                 time.sleep(self.inter_chunk_delay)
@@ -171,50 +137,64 @@ class FrameProtocol:
 
     # -------------------------- Decoding helpers --------------------------
     def receive_frame(self, ser: SerialLike, *, block: bool = True) -> Optional[Frame]:
-        """Attempt to read and validate a single frame from *ser*.
-
-        When *block* is False, the method returns ``None`` immediately if no
-        data is available. When True (default), it will continue waiting for the
-        next frame until data arrives.
-        """
-        if not self._await_start_marker(ser, block=block):
-            self._last_error = "等待開始標記逾時"
-            return None
-
-        header = self._read_exact(ser, HEADER_SIZE, block=True)
-        if header is None:
-            self._last_error = "無法讀取標頭"
+        """Attempt to read and validate a single ASCII framed payload from *ser*."""
+        line = self._read_line(ser, block=block)
+        if line is None:
+            self._last_error = None if not block else "未收到任何資料"
             return None
 
         try:
-            stuffed_size, expected_crc = struct.unpack(HEADER_FORMAT, header)
-        except struct.error:
-            # Corrupted header: resynchronise
-            self._discard_until_end(ser)
-            self._last_error = "標頭解碼失敗"
+            text = line.decode("ascii").rstrip("\r\n")
+        except UnicodeDecodeError:
+            self._last_error = "資料非 ASCII 編碼"
             return None
 
-        if stuffed_size <= 0 or stuffed_size > self.max_stuffed_size:
-            # Invalid size, discard until we reach the end marker
-            self._discard_until_end(ser)
-            self._last_error = f"填充長度異常: {stuffed_size}"
+        if not text:
+            self._last_error = "收到空白訊息"
             return None
 
-        stuffed_payload = self._read_exact(ser, stuffed_size, block=True)
-        if stuffed_payload is None:
-            self._last_error = "填充資料讀取不足"
+        parts = text.split(FIELD_SEPARATOR, 3)
+        if len(parts) != 4:
+            self._last_error = "欄位數不正確"
             return None
 
-        end_marker = self._read_exact(ser, len(END_OF_FRAME), block=True)
-        if end_marker != END_OF_FRAME:
-            # Attempt to resynchronise for subsequent frames
-            self._discard_until_end(ser)
-            self._last_error = "未找到結束標記"
+        prefix, length_str, crc_str, encoded = parts
+        if prefix != FRAME_PREFIX:
+            self._last_error = "開頭標記錯誤"
             return None
 
-        payload = unstuff_bytes(stuffed_payload)
-        if not payload or len(payload) > self.max_payload_size:
-            self._last_error = f"反填充後大小異常: {len(payload)}"
+        try:
+            encoded_length = int(length_str)
+        except ValueError:
+            self._last_error = "長度欄位不是整數"
+            return None
+
+        if encoded_length != len(encoded):
+            self._last_error = f"長度不符，宣告 {encoded_length} 實際 {len(encoded)}"
+            return None
+
+        if encoded_length > self.max_encoded_size:
+            self._last_error = "編碼資料超過上限"
+            return None
+
+        try:
+            expected_crc = int(crc_str, 16)
+        except ValueError:
+            self._last_error = "CRC 欄位格式錯誤"
+            return None
+
+        try:
+            payload = base64.b64decode(encoded.encode("ascii"), validate=True)
+        except Exception:
+            self._last_error = "Base64 解碼失敗"
+            return None
+
+        if not payload:
+            self._last_error = "解碼後為空資料"
+            return None
+
+        if len(payload) > self.max_payload_size:
+            self._last_error = "解碼資料超過大小限制"
             return None
 
         crc = zlib.crc32(payload) & 0xFFFFFFFF
@@ -224,36 +204,25 @@ class FrameProtocol:
 
         stats = FrameStats(
             payload_size=len(payload),
-            stuffed_size=len(stuffed_payload),
+            stuffed_size=len(encoded),
             crc=crc,
         )
         self._last_error = None
         return Frame(payload=payload, stats=stats)
 
     # -------------------------- Internal helpers --------------------------
-    def _await_start_marker(self, ser: SerialLike, *, block: bool) -> bool:
-        while True:
-            byte = ser.read(1)
-            if byte == START_OF_FRAME:
-                return True
-            if not byte:
-                if block:
-                    continue
-                return False
-
-    def _read_exact(self, ser: SerialLike, size: int, *, block: bool) -> Optional[bytes]:
+    def _read_line(self, ser: SerialLike, *, block: bool) -> Optional[bytes]:
         buffer = bytearray()
-        while len(buffer) < size:
-            chunk = ser.read(size - len(buffer))
+        while True:
+            chunk = ser.read(1)
             if chunk:
                 buffer.extend(chunk)
+                if chunk == b"\n":
+                    return bytes(buffer)
+                if len(buffer) > self.max_encoded_size + 64:
+                    # Prevent unbounded growth in case of malformed stream
+                    self._last_error = "資料行過長"
+                    return None
                 continue
             if not block:
                 return None
-        return bytes(buffer)
-
-    def _discard_until_end(self, ser: SerialLike) -> None:
-        while True:
-            byte = ser.read(1)
-            if not byte or byte == END_OF_FRAME:
-                return
