@@ -7,7 +7,7 @@ from typing import Literal, Optional
 import cv2
 
 ColorMode = Literal["gray", "bgr"]
-VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg", "contour"]
+VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg", "contour", "yolo"]
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,7 @@ class ImageSettings:
     color_mode: ColorMode = "gray"
     """預設以灰階做運動檢測，再在編碼前轉回 BGR，兼顧壓縮與相容性。"""
 
-    codec: VideoCodec = 'contour'
+    codec: VideoCodec = 'yolo'
     """影像編碼器類型。預設改用 H.264，因為在 160×120@120kbps 下壓縮效率最佳。"""
 
     wavelet_levels: int = 1
@@ -64,6 +64,21 @@ class ImageSettings:
 
     contour_coefficients: int = 16
     """Contour 模式保留的低頻傅立葉係數數量。"""
+
+    yolo_weights: str = "yolov5n-face.pt"
+    """YOLOv5 權重檔路徑或模型名稱（需先行下載）。"""
+
+    yolo_confidence: float = 0.25
+    """YOLOv5 信心門檻（0-1）。"""
+
+    yolo_iou: float = 0.45
+    """YOLOv5 NMS IoU 門檻。"""
+
+    yolo_device: str = "cpu"
+    """YOLOv5 推論使用的裝置，例如 'cpu' 或 'cuda:0'。"""
+
+    yolo_max_detections: int = 10
+    """YOLOv5 單張影像保留的最大框數。"""
 
 
 DEFAULT_IMAGE_SETTINGS = ImageSettings()

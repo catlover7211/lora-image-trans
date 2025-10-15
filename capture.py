@@ -9,7 +9,15 @@ import cv2
 import numpy as np
 import serial
 
-from h264_codec import ContourEncoder, EncodedChunk, H264Encoder, JPEGEncoder, VideoCodec, WaveletEncoder
+from h264_codec import (
+    ContourEncoder,
+    EncodedChunk,
+    H264Encoder,
+    JPEGEncoder,
+    VideoCodec,
+    WaveletEncoder,
+    YOLODetectionEncoder,
+)
 from image_settings import DEFAULT_IMAGE_SETTINGS, color_conversion
 from protocol import BAUD_RATE, FrameProtocol, FrameStats, auto_detect_serial_port
 
@@ -43,6 +51,11 @@ class EncoderConfig:
     jpeg_quality: int = IMAGE_DEFAULTS.jpeg_quality
     contour_samples: int = IMAGE_DEFAULTS.contour_samples
     contour_coefficients: int = IMAGE_DEFAULTS.contour_coefficients
+    yolo_weights: str = IMAGE_DEFAULTS.yolo_weights
+    yolo_confidence: float = IMAGE_DEFAULTS.yolo_confidence
+    yolo_iou: float = IMAGE_DEFAULTS.yolo_iou
+    yolo_device: str = IMAGE_DEFAULTS.yolo_device
+    yolo_max_detections: int = IMAGE_DEFAULTS.yolo_max_detections
 
     def __post_init__(self) -> None:
         if self.width <= 0 or self.height <= 0:
@@ -64,6 +77,12 @@ class EncoderConfig:
         max_coeffs = self.contour_samples // 2 + 1
         if self.contour_coefficients > max_coeffs:
             raise ValueError('contour_coefficients 不得超過可用的傅立葉係數數量。')
+        if not (0.0 < self.yolo_confidence <= 1.0):
+            raise ValueError('yolo_confidence 必須在 0 到 1 之間。')
+        if not (0.0 < self.yolo_iou <= 1.0):
+            raise ValueError('yolo_iou 必須在 0 到 1 之間。')
+        if self.yolo_max_detections <= 0:
+            raise ValueError('yolo_max_detections 必須為正整數。')
 
 
 @dataclass(frozen=True)
@@ -109,6 +128,16 @@ class FrameEncoder:
                 samples=config.contour_samples,
                 coefficients=config.contour_coefficients,
             )
+        elif config.codec == 'yolo':
+            self.encoder = YOLODetectionEncoder(
+                width=config.width,
+                height=config.height,
+                weights_path=config.yolo_weights,
+                confidence=config.yolo_confidence,
+                iou=config.yolo_iou,
+                device=config.yolo_device,
+                max_detections=config.yolo_max_detections,
+            )
         else:
             self.encoder = H264Encoder(
                 width=config.width,
@@ -128,7 +157,7 @@ class FrameEncoder:
 
     def encode(self, frame: Any) -> tuple[list[EncodedChunk], Any, int]:
         processed = frame
-        if self.config.color_conversion is not None:
+        if self.config.color_conversion is not None and self.codec_name not in {'yolo'}:
             processed = cv2.cvtColor(processed, self.config.color_conversion)
         resized = cv2.resize(processed, (self.config.width, self.config.height), interpolation=cv2.INTER_AREA)
 
@@ -138,8 +167,9 @@ class FrameEncoder:
             bgr_frame = resized
 
         chunks = self.encoder.encode(bgr_frame)
+        preview = getattr(self.encoder, 'preview_frame', resized)
         raw_size = bgr_frame.size * bgr_frame.itemsize
-        return chunks, resized, raw_size
+        return chunks, preview, raw_size
 
 
 class FrameTransmitter:
@@ -169,7 +199,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--width', type=int, default=IMAGE_DEFAULTS.width, help='輸出影像寬度 (預設: %(default)s)')
     parser.add_argument('--height', type=int, default=IMAGE_DEFAULTS.height, help='輸出影像高度 (預設: %(default)s)')
     parser.add_argument('--color-mode', choices=('gray', 'bgr'), default=IMAGE_DEFAULTS.color_mode, help='影像編碼顏色模式 (預設: %(default)s)')
-    parser.add_argument('--codec', choices=('h264', 'h265', 'av1', 'wavelet', 'jpeg', 'contour'), default=IMAGE_DEFAULTS.codec, help='選擇影像編碼器 (預設: %(default)s)')
+    parser.add_argument('--codec', choices=('h264', 'h265', 'av1', 'wavelet', 'jpeg', 'contour', 'yolo'), default=IMAGE_DEFAULTS.codec, help='選擇影像編碼器 (預設: %(default)s)')
     parser.add_argument('--interval', type=float, default=IMAGE_DEFAULTS.transmit_interval, help='幀與幀之間的最小秒數 (預設: %(default)s)')
     parser.add_argument('--camera-fps', type=float, default=None, help='嘗試設定攝影機的擷取 FPS (<=0 表示維持裝置預設)')
     parser.add_argument('--serial-timeout', type=float, default=DEFAULT_SERIAL_TIMEOUT, help='序列埠 timeout 秒數 (預設: %(default)s)')
@@ -182,6 +212,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--jpeg-quality', type=int, default=IMAGE_DEFAULTS.jpeg_quality, help='JPEG 壓縮品質 (1-100，僅 jpeg 編碼器使用，預設: %(default)s)')
     parser.add_argument('--contour-samples', type=int, default=IMAGE_DEFAULTS.contour_samples, help='Contour 函數採樣點數 (僅 contour 編碼器使用，預設: %(default)s)')
     parser.add_argument('--contour-coeffs', type=int, default=IMAGE_DEFAULTS.contour_coefficients, help='Contour 傳輸的傅立葉係數數量 (僅 contour 編碼器使用，預設: %(default)s)')
+    parser.add_argument('--yolo-weights', default=IMAGE_DEFAULTS.yolo_weights, help='YOLOv5 權重檔路徑或模型名稱 (僅 yolo 編碼器使用)')
+    parser.add_argument('--yolo-conf', type=float, default=IMAGE_DEFAULTS.yolo_confidence, help='YOLOv5 信心門檻 (僅 yolo 編碼器使用，預設: %(default)s)')
+    parser.add_argument('--yolo-iou', type=float, default=IMAGE_DEFAULTS.yolo_iou, help='YOLOv5 NMS IoU 門檻 (僅 yolo 編碼器使用，預設: %(default)s)')
+    parser.add_argument('--yolo-device', default=IMAGE_DEFAULTS.yolo_device, help='YOLOv5 推論裝置 (僅 yolo 編碼器使用，預設: %(default)s)')
+    parser.add_argument('--yolo-max-det', type=int, default=IMAGE_DEFAULTS.yolo_max_detections, help='YOLOv5 單張影像最大框數 (僅 yolo 編碼器使用，預設: %(default)s)')
     parser.add_argument('--tx-buffer', type=int, default=IMAGE_DEFAULTS.tx_buffer_size, help='傳送端待發緩衝區容量 (幀數，預設: %(default)s)')
     ack_group = parser.add_mutually_exclusive_group()
     ack_group.add_argument('--ack', action='store_true', help='強制啟用 chunk 級 ACK（較可靠，但傳輸耗時較長）')
@@ -240,6 +275,11 @@ def main() -> None:
                 jpeg_quality=args.jpeg_quality,
                 contour_samples=args.contour_samples,
                 contour_coefficients=args.contour_coeffs,
+                yolo_weights=args.yolo_weights,
+                yolo_confidence=args.yolo_conf,
+                yolo_iou=args.yolo_iou,
+                yolo_device=args.yolo_device,
+                yolo_max_detections=args.yolo_max_det,
             ),
             fps=fps_hint,
         )

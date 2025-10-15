@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Any, Iterable, List, Literal, Optional
+from typing import Any, Iterable, List, Literal, Optional, Tuple
 import struct
 import zlib
 
@@ -13,7 +13,9 @@ import numpy as np
 from av.packet import Packet
 from av.video.frame import PictureType
 
-VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg", "contour"]
+VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg", "contour", "yolo"]
+
+DetectionBox = Tuple[float, float, float, float, float]
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,7 @@ class EncodedChunk:
     FLAG_CODEC_WAVELET = 0x10
     FLAG_CODEC_JPEG = 0x20
     FLAG_CODEC_CONTOUR = 0x40
+    FLAG_CODEC_YOLO = 0x80
 
     def to_payload(self) -> bytes:
         """Convert the chunk into a protocol payload with a flag prefix."""
@@ -50,6 +53,8 @@ class EncodedChunk:
             flags |= self.FLAG_CODEC_JPEG
         elif self.codec == "contour":
             flags |= self.FLAG_CODEC_CONTOUR
+        elif self.codec == "yolo":
+            flags |= self.FLAG_CODEC_YOLO
         return bytes((flags,)) + self.data
 
     @classmethod
@@ -64,6 +69,8 @@ class EncodedChunk:
             codec = "contour"
         elif flags & cls.FLAG_CODEC_JPEG:
             codec = "jpeg"
+        elif flags & cls.FLAG_CODEC_YOLO:
+            codec = "yolo"
         elif flags & cls.FLAG_CODEC_AV1:
             codec = "av1"
         elif flags & cls.FLAG_CODEC_HEVC:
@@ -379,6 +386,117 @@ class ContourEncoder:
         return
 
 
+class DetectionEncoder:
+    """Serialize normalized bounding boxes into protocol payloads."""
+
+    VERSION = 1
+    HEADER_STRUCT = struct.Struct("<BHHB")
+    BOX_STRUCT = struct.Struct("<fffff")
+
+    def __init__(self, width: int, height: int) -> None:
+        if width <= 0 or height <= 0:
+            raise ValueError("影像尺寸必須為正整數")
+        self.width = width
+        self.height = height
+
+    def encode(self, boxes: List[DetectionBox]) -> List[EncodedChunk]:
+        count = min(len(boxes), 255)
+        header = self.HEADER_STRUCT.pack(
+            self.VERSION,
+            self.width,
+            self.height,
+            count,
+        )
+        body = bytearray(self.BOX_STRUCT.size * count)
+        for idx, (cx, cy, w, h, conf) in enumerate(boxes[:count]):
+            cx_c = float(np.clip(cx, 0.0, 1.0))
+            cy_c = float(np.clip(cy, 0.0, 1.0))
+            w_c = float(np.clip(w, 0.0, 1.0))
+            h_c = float(np.clip(h, 0.0, 1.0))
+            conf_c = float(np.clip(conf, 0.0, 1.0))
+            offset = idx * self.BOX_STRUCT.size
+            struct.pack_into("<fffff", body, offset, cx_c, cy_c, w_c, h_c, conf_c)
+
+        chunk = EncodedChunk(
+            data=header + bytes(body),
+            codec="yolo",
+            is_keyframe=True,
+            is_config=False,
+        )
+        return [chunk]
+
+    def force_keyframe(self) -> None:
+        return
+
+    def force_config_repeat(self, count: int = 3) -> None:
+        return
+
+
+class YOLODetectionEncoder:
+    """Run YOLOv5 on frames to produce bounding boxes."""
+
+    def __init__(
+        self,
+        *,
+        width: int,
+        height: int,
+        weights_path: str,
+        confidence: float,
+        iou: float,
+        device: str,
+        max_detections: int,
+        detector: Optional[Any] = None,
+    ) -> None:
+        self.width = width
+        self.height = height
+        self.packetizer = DetectionEncoder(width, height)
+        self.preview_frame = np.zeros((height, width, 3), dtype=np.uint8)
+        if detector is not None:
+            self.detector = detector
+        else:
+            from yolo_detector import YOLOv5Detector
+
+            self.detector = YOLOv5Detector(
+                weights_path=weights_path,
+                confidence=confidence,
+                iou=iou,
+                device=device,
+                max_detections=max_detections,
+            )
+
+    def encode(self, frame_bgr: np.ndarray) -> List[EncodedChunk]:
+        if frame_bgr.shape[0] != self.height or frame_bgr.shape[1] != self.width:
+            raise ValueError("輸入影像尺寸與編碼器不符")
+        if frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3:
+            raise ValueError("輸入影像需為 BGR 三通道格式")
+
+        detections = self.detector.detect(frame_bgr)
+        overlay = frame_bgr.copy()
+        for cx, cy, w, h, conf in detections:
+            abs_w = max(int(round(w * self.width)), 1)
+            abs_h = max(int(round(h * self.height)), 1)
+            x1 = int(round(cx * self.width - abs_w / 2))
+            y1 = int(round(cy * self.height - abs_h / 2))
+            x2 = x1 + abs_w
+            y2 = y1 + abs_h
+            x1 = int(np.clip(x1, 0, self.width - 1))
+            y1 = int(np.clip(y1, 0, self.height - 1))
+            x2 = int(np.clip(x2, 0, self.width - 1))
+            y2 = int(np.clip(y2, 0, self.height - 1))
+            cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), thickness=2)
+            label = f"{conf:.2f}"
+            cv2.putText(overlay, label, (x1, max(0, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+
+        self.preview_frame = overlay
+        return self.packetizer.encode(detections)
+
+    def force_keyframe(self) -> None:
+        return
+
+    def force_config_repeat(self, count: int = 3) -> None:
+        return
+
+
 def _bgr_to_ycocg(frame: np.ndarray) -> np.ndarray:
     b = frame[..., 0].astype(np.int32)
     g = frame[..., 1].astype(np.int32)
@@ -616,6 +734,48 @@ class ContourDecoder:
         return canvas
 
 
+class DetectionDecoder:
+    """Reconstruct detection overlays from serialized bounding boxes."""
+
+    HEADER_STRUCT = DetectionEncoder.HEADER_STRUCT
+    BOX_STRUCT = DetectionEncoder.BOX_STRUCT
+
+    def decode_chunk(self, chunk: EncodedChunk) -> np.ndarray:
+        data = chunk.data
+        if len(data) < self.HEADER_STRUCT.size:
+            raise RuntimeError("Detection 資料過短")
+        version, width, height, count = self.HEADER_STRUCT.unpack_from(data, 0)
+        if version != DetectionEncoder.VERSION:
+            raise RuntimeError(f"Detection 版本不支援: {version}")
+        expected_bytes = count * self.BOX_STRUCT.size
+        payload = data[self.HEADER_STRUCT.size:]
+        if len(payload) != expected_bytes:
+            raise RuntimeError("Detection 係數長度不符")
+
+        canvas = np.zeros((height, width, 3), dtype=np.uint8)
+        for idx in range(count):
+            offset = idx * self.BOX_STRUCT.size
+            cx, cy, w, h, conf = self.BOX_STRUCT.unpack_from(payload, offset)
+            cx = float(np.clip(cx, 0.0, 1.0))
+            cy = float(np.clip(cy, 0.0, 1.0))
+            w = float(np.clip(w, 0.0, 1.0))
+            h = float(np.clip(h, 0.0, 1.0))
+            abs_w = max(int(round(w * width)), 1)
+            abs_h = max(int(round(h * height)), 1)
+            x1 = int(round(cx * width - abs_w / 2))
+            y1 = int(round(cy * height - abs_h / 2))
+            x2 = x1 + abs_w
+            y2 = y1 + abs_h
+            x1 = int(np.clip(x1, 0, max(0, width - 1)))
+            y1 = int(np.clip(y1, 0, max(0, height - 1)))
+            x2 = int(np.clip(x2, 0, max(0, width - 1)))
+            y2 = int(np.clip(y2, 0, max(0, height - 1)))
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), (255, 0, 0), thickness=2)
+            label = f"{conf:.2f}"
+            cv2.putText(canvas, label, (x1, max(0, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        return canvas
+
+
 class H264Decoder:
     """Decodes H.264/H.265/AV1 payloads back into numpy image frames."""
 
@@ -624,9 +784,10 @@ class H264Decoder:
         self._codec_name: Optional[VideoCodec] = None
         self._wavelet_decoder = WaveletDecoder()
         self._contour_decoder = ContourDecoder()
+        self._detection_decoder = DetectionDecoder()
 
     def _open_codec(self, codec_name: VideoCodec) -> Any:
-        if codec_name in {"wavelet", "contour"}:
+        if codec_name in {"wavelet", "contour", "yolo"}:
             raise RuntimeError("該編碼器應透過專用路徑建立")
         if self.codec is not None and self._codec_name == codec_name:
             return self.codec
@@ -666,6 +827,11 @@ class H264Decoder:
             if chunk.is_config:
                 return []
             return [self._contour_decoder.decode_chunk(chunk)]
+        if codec_name == "yolo":
+            self._codec_name = "yolo"
+            if chunk.is_config:
+                return []
+            return [self._detection_decoder.decode_chunk(chunk)]
         if codec_name == "jpeg":
             self._codec_name = "jpeg"
             if chunk.is_config:
@@ -698,6 +864,8 @@ class H264Decoder:
         if self._codec_name == "jpeg":
             return []
         if self._codec_name == "contour":
+            return []
+        if self._codec_name == "yolo":
             return []
         if self.codec is None:
             return []
