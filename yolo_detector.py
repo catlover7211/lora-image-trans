@@ -24,22 +24,35 @@ class YOLOv5Detector:
             raise RuntimeError("YOLOv5 偵測需要安裝 torch 套件。") from exc
 
         weights = Path(weights_path)
-        if weights.exists():
-            self.model = torch.hub.load(
-                "ultralytics/yolov5n-seg.pt",
-                "custom",
-                path=str(weights),
-                source="local",
-                trust_repo=True,
-            )
-        else:
-            # 若提供的是官方模型名稱 (例如 yolov5s)，讓 torch.hub 自行下載
-            self.model = torch.hub.load(
-                "ultralytics/yolov5n-seg.pt",
-                weights_path,
-                pretrained=True,
-                trust_repo=True,
-            )
+        try:
+            if weights.exists():
+                self.model = torch.hub.load(
+                    "ultralytics/yolov5",
+                    "custom",
+                    path=str(weights),
+                    source="local",
+                    trust_repo=True,
+                )
+            elif weights_path.endswith(".pt"):
+                # 依官方文件，若提供 .pt 檔名會視為自訂權重並透過第三個參數傳入
+                self.model = torch.hub.load(
+                    "ultralytics/yolov5",
+                    "custom",
+                    weights_path,
+                    trust_repo=True,
+                )
+            else:
+                # 若提供的是官方模型名稱 (例如 yolov5s) 則透過 pretrained=True 載入
+                self.model = torch.hub.load(
+                    "ultralytics/yolov5",
+                    weights_path,
+                    pretrained=True,
+                    trust_repo=True,
+                )
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "載入 YOLOv5 模型時找不到 'ultralytics' 相依套件，請先執行 pip install ultralytics"
+            ) from exc
         self.model.to(device)
         self.model.conf = float(confidence)
         self.model.iou = float(iou)
