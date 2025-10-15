@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from pathlib import Path
 from typing import Any, List, Tuple
 
@@ -41,6 +40,7 @@ class YOLOv5Detector:
                         "custom",
                         weights_path,
                         trust_repo=True,
+                        source="github",
                     )
                 else:
                     raise RuntimeError(
@@ -55,6 +55,7 @@ class YOLOv5Detector:
                     weights_path,
                     pretrained=True,
                     trust_repo=True,
+                    source="github",
                 )
         except ModuleNotFoundError as exc:
             raise RuntimeError(
