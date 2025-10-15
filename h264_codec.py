@@ -13,7 +13,7 @@ import numpy as np
 from av.packet import Packet
 from av.video.frame import PictureType
 
-VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg"]
+VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg", "contour"]
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,7 @@ class EncodedChunk:
     FLAG_CODEC_AV1 = 0x08
     FLAG_CODEC_WAVELET = 0x10
     FLAG_CODEC_JPEG = 0x20
+    FLAG_CODEC_CONTOUR = 0x40
 
     def to_payload(self) -> bytes:
         """Convert the chunk into a protocol payload with a flag prefix."""
@@ -47,6 +48,8 @@ class EncodedChunk:
             flags |= self.FLAG_CODEC_WAVELET
         elif self.codec == "jpeg":
             flags |= self.FLAG_CODEC_JPEG
+        elif self.codec == "contour":
+            flags |= self.FLAG_CODEC_CONTOUR
         return bytes((flags,)) + self.data
 
     @classmethod
@@ -57,6 +60,8 @@ class EncodedChunk:
         data = payload[1:]
         if flags & cls.FLAG_CODEC_WAVELET:
             codec: VideoCodec = "wavelet"
+        elif flags & cls.FLAG_CODEC_CONTOUR:
+            codec = "contour"
         elif flags & cls.FLAG_CODEC_JPEG:
             codec = "jpeg"
         elif flags & cls.FLAG_CODEC_AV1:
@@ -286,6 +291,94 @@ class JPEGEncoder:
         return
 
 
+class ContourEncoder:
+    """Approximates frame contours with a truncated Fourier series."""
+
+    VERSION = 1
+    HEADER_STRUCT = struct.Struct("<BHHHffH")
+    COEFF_STRUCT = struct.Struct("<ff")
+
+    def __init__(self, width: int, height: int, *, samples: int = 128, coefficients: int = 16) -> None:
+        if width <= 0 or height <= 0:
+            raise ValueError("影像尺寸必須為正整數")
+        if samples <= 0:
+            raise ValueError("samples 必須為正整數")
+        if coefficients <= 0:
+            raise ValueError("coefficients 必須為正整數")
+        self.width = width
+        self.height = height
+        self.samples = samples
+        max_coeffs = samples // 2 + 1
+        self.coefficients = min(coefficients, max(1, max_coeffs))
+
+    def encode(self, frame_bgr: np.ndarray) -> List[EncodedChunk]:
+        if frame_bgr.shape[0] != self.height or frame_bgr.shape[1] != self.width:
+            raise ValueError("輸入影像尺寸與編碼器不符")
+        if frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3:
+            raise ValueError("輸入影像需為 BGR 三通道格式")
+
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 150)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+        if not contours:
+            center = np.array([self.width / 2.0, self.height / 2.0], dtype=np.float32)
+            radii_samples = np.zeros(self.samples, dtype=np.float32)
+        else:
+            largest = max(contours, key=cv2.contourArea)
+            points = largest.reshape(-1, 2).astype(np.float32)
+            center = points.mean(axis=0)
+            vectors = points - center
+            norms = np.linalg.norm(vectors, axis=1)
+            if np.all(norms == 0):
+                radii_samples = np.zeros(self.samples, dtype=np.float32)
+            else:
+                angles = np.mod(np.arctan2(vectors[:, 1], vectors[:, 0]) + 2 * np.pi, 2 * np.pi)
+                order = np.argsort(angles)
+                angles_sorted = angles[order]
+                radii_sorted = norms[order]
+                # 若角度重複，np.interp 仍可處理；擴展 2π 週期確保補間
+                angles_ext = np.concatenate([angles_sorted, angles_sorted + 2 * np.pi])
+                radii_ext = np.concatenate([radii_sorted, radii_sorted])
+                sample_angles = np.linspace(0.0, 2 * np.pi, self.samples, endpoint=False, dtype=np.float32)
+                radii_samples = np.interp(sample_angles, angles_ext, radii_ext).astype(np.float32)
+
+        spectrum = np.fft.rfft(radii_samples)
+        keep = min(self.coefficients, spectrum.shape[0])
+        kept_coeffs = spectrum[:keep]
+
+        header = self.HEADER_STRUCT.pack(
+            self.VERSION,
+            self.width,
+            self.height,
+            self.samples,
+            float(center[0]),
+            float(center[1]),
+            keep,
+        )
+
+        body = bytearray(self.COEFF_STRUCT.size * keep)
+        offset = 0
+        for coeff in kept_coeffs:
+            struct.pack_into("<ff", body, offset, float(np.real(coeff)), float(np.imag(coeff)))
+            offset += self.COEFF_STRUCT.size
+
+        chunk = EncodedChunk(
+            data=header + bytes(body),
+            codec="contour",
+            is_keyframe=True,
+            is_config=False,
+        )
+        return [chunk]
+
+    def force_keyframe(self) -> None:
+        return
+
+    def force_config_repeat(self, count: int = 3) -> None:
+        return
+
+
 def _bgr_to_ycocg(frame: np.ndarray) -> np.ndarray:
     b = frame[..., 0].astype(np.int32)
     g = frame[..., 1].astype(np.int32)
@@ -471,6 +564,58 @@ class WaveletDecoder:
         return []
 
 
+class ContourDecoder:
+    """Reconstructs contour renderings from Fourier coefficients."""
+
+    HEADER_STRUCT = ContourEncoder.HEADER_STRUCT
+    COEFF_STRUCT = ContourEncoder.COEFF_STRUCT
+
+    def decode_chunk(self, chunk: EncodedChunk) -> np.ndarray:
+        data = chunk.data
+        if len(data) < self.HEADER_STRUCT.size:
+            raise RuntimeError("Contour 資料過短")
+        version, width, height, samples, center_x, center_y, keep = self.HEADER_STRUCT.unpack_from(data, 0)
+        if version != ContourEncoder.VERSION:
+            raise RuntimeError(f"Contour 版本不支援: {version}")
+        if samples <= 0:
+            raise RuntimeError("Contour 樣本數無效")
+        expected_coeff_bytes = keep * self.COEFF_STRUCT.size
+        payload = data[self.HEADER_STRUCT.size:]
+        if len(payload) != expected_coeff_bytes:
+            raise RuntimeError("Contour 係數長度不符")
+
+        spectrum = np.zeros(samples // 2 + 1, dtype=np.complex64)
+        for i in range(keep):
+            offset = i * self.COEFF_STRUCT.size
+            real, imag = self.COEFF_STRUCT.unpack_from(payload, offset)
+            spectrum[i] = complex(real, imag)
+
+        radii = np.fft.irfft(spectrum, n=samples).astype(np.float32)
+        radii = np.maximum(radii, 0.0)
+        angles = np.linspace(0.0, 2 * np.pi, samples, endpoint=False, dtype=np.float32)
+        xs = center_x + radii * np.cos(angles)
+        ys = center_y + radii * np.sin(angles)
+        points = np.stack((xs, ys), axis=1)
+        points = np.round(points).astype(np.int32)
+
+        width_i = int(width)
+        height_i = int(height)
+        if width_i <= 0 or height_i <= 0:
+            raise RuntimeError("Contour 影像尺寸無效")
+        if points.size > 0:
+            points[:, 0] = np.clip(points[:, 0], 0, max(0, width_i - 1))
+            points[:, 1] = np.clip(points[:, 1], 0, max(0, height_i - 1))
+        poly = points.reshape(-1, 1, 2)
+
+        canvas = np.zeros((height_i, width_i, 3), dtype=np.uint8)
+        if poly.size > 0:
+            cv2.polylines(canvas, [poly], True, (0, 255, 0), thickness=2)
+        center_point = (int(round(center_x)), int(round(center_y)))
+        if 0 <= center_point[0] < width_i and 0 <= center_point[1] < height_i:
+            cv2.circle(canvas, center_point, 2, (0, 0, 255), thickness=-1)
+        return canvas
+
+
 class H264Decoder:
     """Decodes H.264/H.265/AV1 payloads back into numpy image frames."""
 
@@ -478,10 +623,11 @@ class H264Decoder:
         self.codec: Optional[Any] = None
         self._codec_name: Optional[VideoCodec] = None
         self._wavelet_decoder = WaveletDecoder()
+        self._contour_decoder = ContourDecoder()
 
     def _open_codec(self, codec_name: VideoCodec) -> Any:
-        if codec_name == "wavelet":
-            raise RuntimeError("Wavelet 解碼器應透過專用路徑建立")
+        if codec_name in {"wavelet", "contour"}:
+            raise RuntimeError("該編碼器應透過專用路徑建立")
         if self.codec is not None and self._codec_name == codec_name:
             return self.codec
 
@@ -515,6 +661,11 @@ class H264Decoder:
             if chunk.is_config:
                 return []
             return [self._wavelet_decoder.decode_chunk(chunk)]
+        if codec_name == "contour":
+            self._codec_name = "contour"
+            if chunk.is_config:
+                return []
+            return [self._contour_decoder.decode_chunk(chunk)]
         if codec_name == "jpeg":
             self._codec_name = "jpeg"
             if chunk.is_config:
@@ -545,6 +696,8 @@ class H264Decoder:
         if self._codec_name == "wavelet":
             return list(self._wavelet_decoder.flush())
         if self._codec_name == "jpeg":
+            return []
+        if self._codec_name == "contour":
             return []
         if self.codec is None:
             return []
