@@ -23,24 +23,22 @@ class YOLOv5Detector:
             raise RuntimeError("YOLOv5 偵測需要安裝 torch 套件。") from exc
 
         weights = Path(weights_path)
+        repo_name = "ultralytics/yolov5"
+        hub_kwargs: dict[str, Any] = {
+            "trust_repo": True,
+            "source": "github",
+        }
         try:
             if weights.exists():
-                self.model = torch.hub.load(
-                    "ultralytics_local/yolov5",
-                    "custom",
-                    path=str(weights),
-                    source="local",
-                    trust_repo=True,
-                )
+                self.model = torch.hub.load(repo_name, "custom", path=str(weights), **hub_kwargs)
             elif weights_path.endswith(".pt"):
                 # 依官方文件，若提供 .pt 檔名會視為自訂權重並透過第三個參數傳入
                 if weights_path.startswith("http://") or weights_path.startswith("https://"):
                     self.model = torch.hub.load(
-                        "ultralytics_local/yolov5",
+                        repo_name,
                         "custom",
-                        weights_path,
-                        trust_repo=True,
-                        source="github",
+                        path=weights_path,
+                        **hub_kwargs,
                     )
                 else:
                     raise RuntimeError(
@@ -51,11 +49,10 @@ class YOLOv5Detector:
             else:
                 # 若提供的是官方模型名稱 (例如 yolov5s) 則透過 pretrained=True 載入
                 self.model = torch.hub.load(
-                    "ultralytics/yolov5",
+                    repo_name,
                     weights_path,
                     pretrained=True,
-                    trust_repo=True,
-                    source="github",
+                    **hub_kwargs,
                 )
         except ModuleNotFoundError as exc:
             raise RuntimeError(
