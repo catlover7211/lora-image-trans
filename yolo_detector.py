@@ -26,7 +26,7 @@ class YOLOv5Detector:
         try:
             if weights.exists():
                 self.model = torch.hub.load(
-                    "ultralytics/yolov5",
+                    "ultralytics_local/yolov5",
                     "custom",
                     path=str(weights),
                     source="local",
@@ -36,7 +36,7 @@ class YOLOv5Detector:
                 # 依官方文件，若提供 .pt 檔名會視為自訂權重並透過第三個參數傳入
                 if weights_path.startswith("http://") or weights_path.startswith("https://"):
                     self.model = torch.hub.load(
-                        "ultralytics/yolov5",
+                        "ultralytics_local/yolov5",
                         "custom",
                         weights_path,
                         trust_repo=True,
