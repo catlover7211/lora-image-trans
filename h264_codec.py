@@ -326,7 +326,18 @@ class ContourEncoder:
 
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blurred, 50, 150)
+
+        # 使用基於影像中位數的自動 Canny 門檻，提高對光線變化的適應性
+        v = np.median(blurred.astype(np.float32))
+        sigma = 0.33
+        lower = int(max(0, (1.0 - sigma) * v))
+        upper = int(min(255, (1.0 + sigma) * v))
+        edges = cv2.Canny(blurred, lower, upper)
+
+        # 使用形態學開運算 (Opening) 來移除小的雜訊點，讓輪廓更乾淨
+        kernel = np.ones((3, 3), np.uint8)
+        edges = cv2.morphologyEx(edges, cv2.MORPH_OPEN, kernel, iterations=1)
+
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
         if not contours:
