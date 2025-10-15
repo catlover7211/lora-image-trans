@@ -59,10 +59,10 @@ class ImageSettings:
     jpeg_quality: int = 15
     """JPEG 壓縮品質 (1-100)。預設 85 在串口頻寬下兼顧畫質與大小。"""
 
-    contour_samples: int = 128
+    contour_samples: int = 512
     """Contour 模式採樣點數，用於建立 r(θ) 函數。"""
 
-    contour_coefficients: int = 16
+    contour_coefficients: int = 64
     """Contour 模式保留的低頻傅立葉係數數量。"""
 
     yolo_weights: str = "https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5n-seg.pt"
