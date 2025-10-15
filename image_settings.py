@@ -65,7 +65,7 @@ class ImageSettings:
     contour_coefficients: int = 16
     """Contour 模式保留的低頻傅立葉係數數量。"""
 
-    yolo_weights: str = "ultralytics/yolov5n-seg.pt"
+    yolo_weights: str = "https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5n-seg.pt"
     """YOLOv5 權重檔路徑或模型名稱。預設使用官方 yolov5n 模型。"""
 
     yolo_confidence: float = 0.25
