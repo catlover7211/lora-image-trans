@@ -70,7 +70,11 @@ class YOLOv5Detector:
 
         # YOLOv5 期望 RGB 格式
         frame_rgb = frame_bgr[:, :, ::-1]
-        results = self.model(frame_rgb, size=640)
+        try:
+            # Some YOLOv5 variants (e.g., segmentation models) lack the size keyword.
+            results = self.model(frame_rgb, size=640)
+        except TypeError:
+            results = self.model(frame_rgb)
         tensor = results.xyxy[0]
         if tensor.is_cuda:
             tensor = tensor.cpu()
