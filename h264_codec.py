@@ -721,24 +721,38 @@ class ContourDecoder:
 
         radii = np.fft.irfft(spectrum, n=samples).astype(np.float32)
         radii = np.maximum(radii, 0.0)
-        angles = np.linspace(0.0, 2 * np.pi, samples, endpoint=False, dtype=np.float32)
-        xs = center_x + radii * np.cos(angles)
-        ys = center_y + radii * np.sin(angles)
-        points = np.stack((xs, ys), axis=1)
-        points = np.round(points).astype(np.int32)
 
         width_i = int(width)
         height_i = int(height)
         if width_i <= 0 or height_i <= 0:
             raise RuntimeError("Contour 影像尺寸無效")
-        if points.size > 0:
-            points[:, 0] = np.clip(points[:, 0], 0, max(0, width_i - 1))
-            points[:, 1] = np.clip(points[:, 1], 0, max(0, height_i - 1))
-        poly = points.reshape(-1, 1, 2)
-
         canvas = np.zeros((height_i, width_i, 3), dtype=np.uint8)
-        if poly.size > 0:
-            cv2.polylines(canvas, [poly], True, (0, 255, 0), thickness=2)
+
+        # 如果半徑都很小，代表輪廓不存在或非常微弱，顯示提示方塊
+        if np.all(radii < 0.1):
+            box_size = 20
+            x1 = width_i // 2 - box_size // 2
+            y1 = height_i // 2 - box_size // 2
+            x2 = x1 + box_size
+            y2 = y1 + box_size
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), (64, 64, 64), 1)
+            cv2.line(canvas, (x1, y1), (x2, y2), (64, 64, 64), 1)
+            cv2.line(canvas, (x1, y2), (x2, y1), (64, 64, 64), 1)
+        else:
+            angles = np.linspace(0.0, 2 * np.pi, samples, endpoint=False, dtype=np.float32)
+            xs = center_x + radii * np.cos(angles)
+            ys = center_y + radii * np.sin(angles)
+            points = np.stack((xs, ys), axis=1)
+            points = np.round(points).astype(np.int32)
+
+            if points.size > 0:
+                points[:, 0] = np.clip(points[:, 0], 0, max(0, width_i - 1))
+                points[:, 1] = np.clip(points[:, 1], 0, max(0, height_i - 1))
+            poly = points.reshape(-1, 1, 2)
+
+            if poly.size > 0:
+                cv2.polylines(canvas, [poly], True, (0, 255, 0), thickness=2)
+
         center_point = (int(round(center_x)), int(round(center_y)))
         if 0 <= center_point[0] < width_i and 0 <= center_point[1] < height_i:
             cv2.circle(canvas, center_point, 2, (0, 0, 255), thickness=-1)
