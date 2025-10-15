@@ -35,12 +35,19 @@ class YOLOv5Detector:
                 )
             elif weights_path.endswith(".pt"):
                 # 依官方文件，若提供 .pt 檔名會視為自訂權重並透過第三個參數傳入
-                self.model = torch.hub.load(
-                    "ultralytics/yolov5",
-                    "custom",
-                    weights_path,
-                    trust_repo=True,
-                )
+                if weights_path.startswith("http://") or weights_path.startswith("https://"):
+                    self.model = torch.hub.load(
+                        "ultralytics/yolov5",
+                        "custom",
+                        weights_path,
+                        trust_repo=True,
+                    )
+                else:
+                    raise RuntimeError(
+                        "找不到指定的 YOLOv5 權重檔 '"
+                        + weights_path
+                        + "'。請提供有效的本機路徑、HTTP(S) 連結，或改用官方模型名稱 (例如 yolov5n)。"
+                    )
             else:
                 # 若提供的是官方模型名稱 (例如 yolov5s) 則透過 pretrained=True 載入
                 self.model = torch.hub.load(
