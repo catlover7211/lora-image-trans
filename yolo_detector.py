@@ -25,10 +25,21 @@ class YOLOv5Detector:
 
         weights = Path(weights_path)
         if weights.exists():
-            self.model = torch.hub.load("ultralytics/yolov5n-seg.pt", "custom", path=str(weights), source="local")
+            self.model = torch.hub.load(
+                "ultralytics/yolov5",
+                "custom",
+                path=str(weights),
+                source="local",
+                trust_repo=True,
+            )
         else:
             # 若提供的是官方模型名稱 (例如 yolov5s)，讓 torch.hub 自行下載
-            self.model = torch.hub.load("ultralytics/yolov5n-seg.pt", weights_path, pretrained=True)
+            self.model = torch.hub.load(
+                "ultralytics/yolov5",
+                weights_path,
+                pretrained=True,
+                trust_repo=True,
+            )
         self.model.to(device)
         self.model.conf = float(confidence)
         self.model.iou = float(iou)
