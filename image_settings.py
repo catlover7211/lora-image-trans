@@ -59,7 +59,7 @@ class ImageSettings:
     jpeg_quality: int = 15
     """JPEG 壓縮品質 (1-100)。預設 85 在串口頻寬下兼顧畫質與大小。"""
 
-    contour_samples: int = 128
+    contour_samples: int = 256
     """Contour 模式採樣點數，用於建立 r(θ) 函數。"""
 
     contour_coefficients: int = 128
