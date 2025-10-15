@@ -14,10 +14,10 @@ VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg", "contour"]
 class ImageSettings:
     """影像擷取與編碼相關的預設參數。"""
 
-    width: int = 160
+    width: int = 1600
     """輸出影像寬度（像素）。維持 4:3 並控制輸出資料量。"""
 
-    height: int = 80
+    height: int = 800
     """輸出影像高度（像素）。配合 160×120 解析度可在 115200 bps 串列埠下達成 >10fps。"""
 
     target_bitrate: int = 120_000
