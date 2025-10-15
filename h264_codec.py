@@ -325,20 +325,14 @@ class ContourEncoder:
             raise ValueError("輸入影像需為 BGR 三通道格式")
 
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-        # 使用基於影像中位數的自動 Canny 門檻，提高對光線變化的適應性
-        v = np.median(blurred.astype(np.float32))
-        sigma = 0.33
-        lower = int(max(0, (1.0 - sigma) * v))
-        upper = int(min(255, (1.0 + sigma) * v))
-        edges = cv2.Canny(blurred, lower, upper)
+        # 使用自適應二值化，將影像轉為黑白，白色為前景
+        bw = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+        )
 
-        # 使用形態學開運算 (Opening) 來移除小的雜訊點，讓輪廓更乾淨
-        kernel = np.ones((3, 3), np.uint8)
-        edges = cv2.morphologyEx(edges, cv2.MORPH_OPEN, kernel, iterations=1)
-
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        # 尋找二值化影像中的輪廓
+        contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
         if not contours:
             center = np.array([self.width / 2.0, self.height / 2.0], dtype=np.float32)
