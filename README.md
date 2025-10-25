@@ -68,3 +68,22 @@ python -m unittest tests/test_protocol.py
 - 若欲使用 YOLO 模式，請先準備對應的權重檔並安裝 `torch` 及 YOLOv5 依賴（程式會透過 `torch.hub` 載入）。
 - 若系統未安裝 libx265 / libaom-av1 或裝置效能不足，可在啟動發送端時加入 `--codec h264` 改回 H.264 以維持相容性。
 - 協定採用 ASCII 框架與 CRC32 校驗，並支援逐段 ACK（初始階段可自動降級為無 ACK 模式，以防止接收端尚未就緒時阻塞）。
+
+## 程式流程圖
+```mermaid
+flowchart TD
+    A[開始] --> B[初始化序列埠與顯示視窗];
+    B --> C{主迴圈};
+    C --> D["<b>處理接收 (protocol.receive_frame)</b><br/>1. 從序列埠讀取一行資料<br/>2. 驗證標頭與長度<br/>3. Base64 解碼<br/>4. 驗證 CRC 校驗碼"];
+    D --> E{是否成功收到有效 Frame?};
+    E -- "否" --> C;
+    E -- "是" --> F[取得還原後的 Payload];
+    F --> G[使用對應的解碼器還原影像];
+    G --> H[在視窗中顯示還原後的影像];
+    H --> I{使用者是否按下 'q' 結束?};
+    I -- "否" --> C;
+    I -- "是" --> J[關閉序列埠與視窗];
+    J --> K[結束];
+
+    style D fill:#ccf,stroke:#333,stroke-width:2px
+```
