@@ -14,10 +14,10 @@ VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg", "contour", "yolo"
 class ImageSettings:
     """影像擷取與編碼相關的預設參數。"""
 
-    width: int = 1600
+    width: int = 160
     """輸出影像寬度（像素）。維持 4:3 並控制輸出資料量。"""
 
-    height: int = 800
+    height: int = 80
     """輸出影像高度（像素）。配合 160×120 解析度可在 115200 bps 串列埠下達成 >10fps。"""
 
     target_bitrate: int = 120_000
@@ -38,7 +38,7 @@ class ImageSettings:
     color_mode: ColorMode = "gray"
     """預設以灰階做運動檢測，再在編碼前轉回 BGR，兼顧壓縮與相容性。"""
 
-    codec: VideoCodec = 'contour'
+    codec: VideoCodec = 'jpeg'
     """影像編碼器類型。預設改用 H.264，因為在 160×120@120kbps 下壓縮效率最佳。"""
 
     wavelet_levels: int = 1
