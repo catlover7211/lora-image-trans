@@ -7,7 +7,7 @@ from typing import Literal, Optional
 import cv2
 
 ColorMode = Literal["gray", "bgr"]
-VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg", "contour", "yolo"]
+VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg", "contour", "yolo","cs"]
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,7 @@ class ImageSettings:
     color_mode: ColorMode = "gray"
     """預設以灰階做運動檢測，再在編碼前轉回 BGR，兼顧壓縮與相容性。"""
 
-    codec: VideoCodec = 'jpeg'
+    codec: VideoCodec = 'cs'
     """影像編碼器類型。預設改用 H.264，因為在 160×120@120kbps 下壓縮效率最佳。"""
 
     wavelet_levels: int = 1
