@@ -131,8 +131,14 @@ class EncodedChunk:
     def from_payload(cls, payload: bytes) -> "EncodedChunk":
         """Deserialize chunk from protocol payload.
         
-        Supports both legacy (1-byte flags) and new (2-byte flags) formats.
-        The new format is required for codecs with flag values >= 0x100 (e.g., CS codec).
+        Supports both legacy (1-byte flags) and new (2-byte flags) formats for
+        backward compatibility. The new format is required for codecs with flag
+        values >= 0x100 (e.g., CS codec with FLAG_CODEC_CS = 0x100).
+        
+        Format detection:
+        - If payload length < 2: treat as legacy format (1-byte flags)
+        - If 2nd byte (high byte of 2-byte flags) is non-zero: new format
+        - Otherwise: legacy format (1-byte flags)
         
         Args:
             payload: Raw bytes from protocol frame
@@ -141,20 +147,31 @@ class EncodedChunk:
             EncodedChunk instance
             
         Raises:
-            ValueError: If payload is empty or too short
+            ValueError: If payload is empty
         """
         if not payload:
             raise ValueError("payload 不可為空")
         
-        if len(payload) < 2:
-            raise ValueError("payload 長度不足，至少需要 2 bytes")
+        # Detect format: new format if length >= 2 AND high byte is set
+        if len(payload) >= 2:
+            # Read as 2-byte little-endian
+            flags_2byte = struct.unpack("<H", payload[:2])[0]
+            # Check if high byte is set (indicates new format or CS codec)
+            if flags_2byte & 0xFF00:
+                # New format with 2-byte flags
+                flags = flags_2byte
+                data = payload[2:]
+            else:
+                # Legacy format with 1-byte flags
+                flags = payload[0]
+                data = payload[1:]
+        else:
+            # Single byte payload - legacy format
+            flags = payload[0]
+            data = payload[1:]
         
-        # Always use 2-byte format for consistency and future compatibility
-        # This simplifies the logic and supports all codec types
-        flags = struct.unpack("<H", payload[:2])[0]
-        data = payload[2:]
-        
-        # Determine codec from flags (priority order matters for overlapping bits)
+        # Determine codec from flags
+        # Priority order: CS > YOLO > CONTOUR > JPEG > WAVELET > AV1 > HEVC > H264
         if flags & cls.FLAG_CODEC_CS:
             codec: VideoCodec = "cs"
         elif flags & cls.FLAG_CODEC_YOLO:

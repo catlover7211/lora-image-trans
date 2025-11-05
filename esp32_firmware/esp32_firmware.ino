@@ -62,9 +62,12 @@ void loop() {
       // 緩衝區溢出 - 重置並記錄錯誤
       Serial.println("ERROR: USB buffer overflow, resetting");
       usb_buffer_pos = 0;
-      // 繼續讀取直到換行符以同步
-      while (Serial.available() > 0 && Serial.read() != '\n') {
-        delayMicroseconds(100);
+      // 快速清空序列埠緩衝區直到換行符以重新同步
+      // 批次讀取以提升效率
+      while (Serial.available() > 0) {
+        if (Serial.read() == '\n') {
+          break;
+        }
       }
     }
   }

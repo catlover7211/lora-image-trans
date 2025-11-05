@@ -354,8 +354,12 @@ class FrameProtocol:
         """Read a small chunk from the serial port respecting blocking preference.
         
         Optimized to read larger chunks when data is available to reduce
-        system call overhead and improve throughput.
+        system call overhead and improve throughput. Maximum read size is
+        capped to prevent memory issues.
         """
+        # Maximum read size to prevent excessive memory allocation
+        MAX_READ_SIZE = 8192  # 8KB hard limit
+        
         max_bytes = self.chunk_size
         available = 0
         try:
@@ -367,9 +371,9 @@ class FrameProtocol:
             return b""
 
         if available > 0:
-            # Read up to double the chunk size when more data is available
-            # This reduces the number of read calls for large frames
-            max_bytes = max(1, min(self.chunk_size * 2, available))
+            # Read up to double the chunk size when more data is available,
+            # but never exceed MAX_READ_SIZE
+            max_bytes = max(1, min(self.chunk_size * 2, available, MAX_READ_SIZE))
 
         try:
             return ser.read(max_bytes)
