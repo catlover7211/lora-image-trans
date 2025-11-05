@@ -395,7 +395,11 @@ class FrameProtocol:
             self._pending_ascii.clear()
 
     def _synchronize(self, ser: SerialLike, timeout: Optional[float] = None) -> bool:
-        """Search for the sync marker in the input buffer with a timeout.
+        """Search for the sync marker or FRAME prefix in the input buffer with a timeout.
+        
+        This method tries to find either:
+        1. Binary SYNC_MARKER (for clean transmissions)
+        2. ASCII "FRAME" prefix (for LoRa transmissions where binary data gets corrupted)
         
         Optimized to handle large buffers more efficiently and reduce
         memory allocations during synchronization.
@@ -413,7 +417,7 @@ class FrameProtocol:
         max_buffer_size = self.max_encoded_size * 2
 
         while True:
-            # Check for sync marker in current buffer
+            # Try to find sync marker (binary or ASCII FRAME prefix)
             if self._try_find_sync_marker(buffer, marker_len):
                 return True
 
@@ -441,13 +445,30 @@ class FrameProtocol:
                 del buffer[:excess]
 
     def _try_find_sync_marker(self, buffer: bytearray, marker_len: int) -> bool:
-        """Try to find sync marker in buffer, updating state if found."""
+        """Try to find sync marker or FRAME prefix in buffer, updating state if found.
+        
+        Tries two methods:
+        1. Look for binary SYNC_MARKER (preferred for clean transmissions)
+        2. Look for ASCII "FRAME " prefix (fallback for LoRa where binary gets corrupted)
+        """
+        # Try binary SYNC_MARKER first
         idx = buffer.find(SYNC_MARKER)
         if idx != -1:
             del buffer[:idx + marker_len]
             self._pending_ascii.extend(buffer)
             self._synced = True
             return True
+        
+        # Fallback: Try to find ASCII "FRAME " prefix (for LoRa transmissions)
+        frame_prefix_bytes = FRAME_PREFIX.encode("ascii") + b" "
+        idx = buffer.find(frame_prefix_bytes)
+        if idx != -1:
+            # Found "FRAME " - sync to the start of this frame
+            del buffer[:idx]
+            self._pending_ascii.extend(buffer)
+            self._synced = True
+            return True
+        
         return False
 
     def _read_line(self, ser: SerialLike, *, block: bool = True, timeout: Optional[float] = None) -> Optional[bytes]:
