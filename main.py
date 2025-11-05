@@ -1,3 +1,13 @@
+"""Video frame receiver for serial communication.
+
+This module receives, decodes, and displays video frames transmitted over serial.
+It supports multiple codecs (H.264, H.265, AV1, JPEG, Wavelet, Contour, YOLO, CS)
+and includes features like:
+- Multi-threaded reception for smooth playback
+- Error reporting with cool-down to prevent console flooding
+- Queue-based buffering to handle transmission irregularities
+- CRC validation for data integrity
+"""
 import argparse
 import queue
 import threading
@@ -12,9 +22,17 @@ from h264_codec import EncodedChunk, H264Decoder
 from image_settings import DEFAULT_IMAGE_SETTINGS
 from protocol import BAUD_RATE, FrameProtocol, FrameStats, auto_detect_serial_port
 
-MAX_PAYLOAD_SIZE = 1920 * 1080  # 允許的最大影像資料大小（反填充後）
+MAX_PAYLOAD_SIZE = 1920 * 1080
+"""Maximum allowed image data size (after unstuffing)."""
+
 WINDOW_TITLE = 'Received CCTV (Press q to quit)'
+"""Window title for the display window."""
+
 DEFAULT_RX_BUFFER = DEFAULT_IMAGE_SETTINGS.rx_buffer_size
+"""Default receive buffer size in frames."""
+
+ERROR_COOLDOWN_SECONDS = 5.0
+"""Minimum seconds between reporting identical errors."""
 
 
 def create_receiver_worker(
@@ -23,9 +41,26 @@ def create_receiver_worker(
     frame_queue: "queue.Queue[tuple[EncodedChunk, FrameStats]]",
     stop_event: threading.Event,
 ) -> tuple[callable, dict]:
-    """Create a receiver worker function with shared state."""
+    """Create a receiver worker function with shared state.
+    
+    This function creates a worker that continuously receives frames from the serial
+    port and places them in a queue for processing. It implements error cool-down
+    to prevent console flooding with repetitive error messages.
+    
+    Args:
+        protocol: The FrameProtocol instance for decoding frames.
+        ser: The serial port to read from.
+        frame_queue: Queue for passing received frames to the main thread.
+        stop_event: Event to signal the worker to stop.
+    
+    Returns:
+        A tuple of (worker_function, state_dict) where state_dict contains
+        worker state like error tracking and dropped chunk counts.
+    """
     state = {
         'last_error_reported': None,
+        'last_error_time': 0.0,
+        'error_cooldown': ERROR_COOLDOWN_SECONDS,
         'dropped_chunks': 0
     }
     
@@ -42,9 +77,14 @@ def create_receiver_worker(
 
             if framed is None:
                 error = protocol.last_error
-                if error and error != state['last_error_reported']:
-                    print(f"接收失敗: {error}")
-                    state['last_error_reported'] = error
+                if error:
+                    current_time = time.time()
+                    # Only report if it's a different error or enough time has passed
+                    if (error != state['last_error_reported'] or 
+                        current_time - state['last_error_time'] >= state['error_cooldown']):
+                        print(f"接收失敗: {error}")
+                        state['last_error_reported'] = error
+                        state['last_error_time'] = current_time
                 time.sleep(0.005)
                 continue
 
@@ -143,9 +183,6 @@ def display_frame(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Receive CCTV frames over serial and display them.')
-    ack_group = parser.add_mutually_exclusive_group()
-    ack_group.add_argument('--ack', action='store_true', help='強制啟用 chunk 級 ACK。需與傳送端一致。')
-    ack_group.add_argument('--no-ack', action='store_true', help='強制停用 chunk 級 ACK。需與傳送端一致。')
     parser.add_argument('--rx-buffer', type=int, default=DEFAULT_RX_BUFFER, help='接收端佇列容量 (幀數，預設: %(default)s)')
     parser.add_argument('--lenient', action='store_true', help='寬鬆模式：忽略部分長度/CRC 驗證，盡量嘗試解碼。')
     return parser.parse_args()
@@ -177,15 +214,13 @@ def main() -> None:
     if ser is None:
         return
 
-    use_chunk_ack = _determine_ack_mode(args)
     protocol = FrameProtocol(
         max_payload_size=MAX_PAYLOAD_SIZE,
-        use_chunk_ack=use_chunk_ack,
         lenient=args.lenient,
     )
     decoder = H264Decoder()
 
-    _print_connection_info(use_chunk_ack, args.lenient)
+    _print_connection_info(args.lenient)
 
     # Setup queue and worker thread
     rx_buffer_size = max(1, args.rx_buffer)
@@ -205,19 +240,9 @@ def main() -> None:
         _cleanup(stop_event, receiver_thread, ser)
 
 
-def _determine_ack_mode(args: argparse.Namespace) -> bool:
-    """Determine ACK mode from command line arguments."""
-    use_chunk_ack = DEFAULT_IMAGE_SETTINGS.use_chunk_ack
-    if args.ack:
-        use_chunk_ack = True
-    elif args.no_ack:
-        use_chunk_ack = False
-    return use_chunk_ack
-
-
-def _print_connection_info(use_chunk_ack: bool, lenient: bool) -> None:
+def _print_connection_info(lenient: bool) -> None:
     """Print connection and configuration information."""
-    print(f"串流 ACK 模式: {'啟用' if use_chunk_ack else '停用'}")
+    print(f"串流 ACK 模式: 停用 (與 ESP32 韌體相容)")
     print(f"接收容錯模式: {'寬鬆' if lenient else '嚴格'}")
     print("已連接序列埠，開始等待接收影像...")
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")

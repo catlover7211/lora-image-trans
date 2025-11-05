@@ -1,4 +1,12 @@
-"""Shared serial video frame protocol utilities using ASCII framing."""
+"""Shared serial video frame protocol utilities using ASCII framing.
+
+This module provides a robust protocol for transmitting video frames over serial connections.
+The protocol features:
+- ASCII-based framing with base64 encoding for binary data
+- CRC32 checksums for data integrity
+- Sync markers for reliable frame boundary detection
+- Configurable lenient mode for lossy connections
+"""
 from __future__ import annotations
 
 import base64
@@ -15,16 +23,31 @@ import serial  # type: ignore
 # Protocol constants
 # ---------------------------------------------------------------------------
 BAUD_RATE = 115_200
+"""Default baud rate for serial communication."""
+
 FRAME_PREFIX = "FRAME"
-SYNC_MARKER = b"\xDE\xAD\xBE\xEF"  # 新增同步標記
+"""ASCII prefix for frame identification."""
+
+SYNC_MARKER = b"\xDE\xAD\xBE\xEF"
+"""Binary sync marker for frame boundary detection."""
+
 FIELD_SEPARATOR = " "
+"""Separator between frame header fields."""
+
 LINE_TERMINATOR = "\n"
+"""Frame terminator character."""
+
 DEFAULT_CHUNK_SIZE = 220
+"""Default size for chunking frames during transmission."""
+
 DEFAULT_INTER_CHUNK_DELAY = 0  # seconds
+"""Default delay between chunks (0 = no delay)."""
+
 DEFAULT_MAX_PAYLOAD_SIZE = 1920 * 1080  # 128 KB (raw payload)
-ACK_MESSAGE = b"ACK\n"
-DEFAULT_ACK_TIMEOUT = 2
-DEFAULT_INITIAL_ACK_SKIP = 1
+"""Maximum allowed payload size to prevent memory issues."""
+
+DEFAULT_SYNC_TIMEOUT = 2.0  # seconds
+"""Default timeout for synchronization when blocking."""
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +111,16 @@ class SerialLike(Protocol):
 
 
 class FrameProtocol:
-    """Utility responsible for framing, validation, and transport orchestration."""
+    """Protocol handler for reliable frame transmission over serial connections.
+    
+    This class manages the encoding, transmission, and reception of frames using:
+    - Base64 encoding for ASCII-safe transmission
+    - CRC32 checksums for data integrity validation
+    - Sync markers for reliable frame boundary detection
+    - Optional lenient mode for handling lossy connections
+    
+    The protocol is designed to work with the ESP32 firmware without ACK support.
+    """
 
     def __init__(
         self,
@@ -96,11 +128,19 @@ class FrameProtocol:
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         inter_chunk_delay: float = DEFAULT_INTER_CHUNK_DELAY,
         max_payload_size: int = DEFAULT_MAX_PAYLOAD_SIZE,
-        use_chunk_ack: bool = False,
-        ack_timeout: float = DEFAULT_ACK_TIMEOUT,
-        initial_skip_acks: int = DEFAULT_INITIAL_ACK_SKIP,
         lenient: bool = False,
     ) -> None:
+        """Initialize the frame protocol handler.
+        
+        Args:
+            chunk_size: Size of chunks for splitting frames during transmission.
+            inter_chunk_delay: Delay in seconds between chunk transmissions.
+            max_payload_size: Maximum allowed payload size in bytes.
+            lenient: If True, tolerate some length/CRC mismatches (for lossy connections).
+        
+        Raises:
+            ValueError: If chunk_size is not positive.
+        """
         if chunk_size <= 0:
             raise ValueError("chunk_size 必須為正整數")
         self.chunk_size = chunk_size
@@ -108,10 +148,6 @@ class FrameProtocol:
         self.max_payload_size = max_payload_size
         # Upper bound for encoded ASCII length (base64 expands ~4/3)
         self.max_encoded_size = int(max_payload_size * 4 / 3) + 16
-        self.use_chunk_ack = use_chunk_ack
-        self.ack_timeout = max(0.0, ack_timeout)
-        self._acks_to_skip = max(0, initial_skip_acks)
-        self._ack_established = False
         self._last_error: Optional[str] = None
         self._pending_ascii: bytearray = bytearray()
         self._lenient = lenient
@@ -143,20 +179,6 @@ class FrameProtocol:
             ser.write(chunk)
             if self.inter_chunk_delay:
                 time.sleep(self.inter_chunk_delay)
-            if not self.use_chunk_ack:
-                continue
-            if self._acks_to_skip > 0:
-                self._acks_to_skip -= 1
-                continue
-            if self._wait_for_ack(ser):
-                self._ack_established = True
-                continue
-            if not self._ack_established:
-                # 尚未建立 ACK 聯繫，降級為無 ACK 模式避免阻塞
-                self.use_chunk_ack = False
-                self._last_error = "尚未收到 ACK，已降級為無 ACK 模式"
-                continue
-            raise TimeoutError("等待 ACK 時間逾時")
         ser.flush()
         return stats
 
@@ -168,7 +190,7 @@ class FrameProtocol:
     # -------------------------- Decoding helpers --------------------------
     def receive_frame(self, ser: SerialLike, *, block: bool = True, timeout: Optional[float] = None) -> Optional[Frame]:
         """Attempt to read and validate a single ASCII framed payload from *ser*."""
-        sync_timeout = timeout if timeout is not None else (self.ack_timeout if block else 0)
+        sync_timeout = timeout if timeout is not None else (DEFAULT_SYNC_TIMEOUT if block else 0)
 
         if not self._synced and not self._synchronize(ser, timeout=sync_timeout):
             self._set_error_if_blocking("無法同步到封包標記 (超時)", block, sync_timeout)
@@ -378,25 +400,6 @@ class FrameProtocol:
             self._synced = True
             return True
         return False
-
-    def _wait_for_ack(self, ser: SerialLike) -> bool:
-        """Wait for an ACK message from the remote."""
-        if self.ack_timeout <= 0:
-            return True
-        deadline = time.monotonic() + self.ack_timeout
-        buffer = bytearray()
-        while True:
-            if time.monotonic() > deadline:
-                return False
-            chunk = ser.read(1)
-            if chunk:
-                buffer.extend(chunk)
-                if len(buffer) > len(ACK_MESSAGE):
-                    del buffer[:-len(ACK_MESSAGE)]
-                if buffer.endswith(ACK_MESSAGE):
-                    return True
-                continue
-            time.sleep(0.001)
 
     def _read_line(self, ser: SerialLike, *, block: bool = True, timeout: Optional[float] = None) -> Optional[bytes]:
         """Read the next newline-terminated ASCII frame payload."""

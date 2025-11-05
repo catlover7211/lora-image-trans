@@ -1,4 +1,13 @@
-"""Utilities for video encoding and decoding over the serial protocol."""
+"""Utilities for video encoding and decoding over the serial protocol.
+
+This module provides comprehensive video codec support including:
+- Standard codecs: H.264, H.265, AV1, JPEG
+- Custom codecs: Wavelet, Contour, Compressed Sensing (CS)
+- Object detection: YOLO-based detection encoding
+
+All encoders produce EncodedChunk objects that can be serialized for transmission.
+All decoders accept EncodedChunk objects and return numpy image arrays.
+"""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -22,9 +31,23 @@ DetectionBox = Tuple[float, float, float, float, float]
 
 
 class BaseEncoder(ABC):
-    """Base class for all encoders with common validation logic."""
+    """Base class for all encoders with common validation logic.
+    
+    Provides standard frame validation and defines the interface that all
+    encoders must implement. Encoders convert numpy BGR images into
+    EncodedChunk objects suitable for transmission.
+    """
     
     def __init__(self, width: int, height: int) -> None:
+        """Initialize encoder with frame dimensions.
+        
+        Args:
+            width: Frame width in pixels.
+            height: Frame height in pixels.
+            
+        Raises:
+            ValueError: If width or height is not positive.
+        """
         if width <= 0 or height <= 0:
             raise ValueError("影像尺寸必須為正整數")
         self.width = width
@@ -53,13 +76,23 @@ class BaseEncoder(ABC):
 
 @dataclass(frozen=True)
 class EncodedChunk:
-    """Represents a single video payload fragment."""
+    """Represents a single video payload fragment.
+    
+    This is the fundamental unit of encoded video data. Each chunk contains:
+    - data: The actual encoded bytes
+    - codec: Which codec was used to encode this chunk
+    - is_keyframe: Whether this is a keyframe (I-frame)
+    - is_config: Whether this contains codec configuration data (SPS/PPS)
+    
+    Chunks are serialized to/from protocol payloads with a 2-byte flag prefix.
+    """
 
     data: bytes
     codec: VideoCodec = "h264"
     is_keyframe: bool = False
     is_config: bool = False
 
+    # Flag bits for serialization
     FLAG_KEYFRAME = 0x01
     FLAG_CONFIG = 0x02
     FLAG_CODEC_HEVC = 0x04

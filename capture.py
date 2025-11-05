@@ -89,18 +89,12 @@ class EncoderConfig:
 class TransmissionConfig:
     interval: float = IMAGE_DEFAULTS.transmit_interval
     buffer_size: int = IMAGE_DEFAULTS.tx_buffer_size
-    use_ack: bool = IMAGE_DEFAULTS.use_chunk_ack
-    initial_ack_skip: int = 1
 
     def __post_init__(self) -> None:
         if self.interval < 0:
             raise ValueError('傳輸間隔不得為負數。')
         if self.buffer_size <= 0:
             raise ValueError('緩衝區容量必須為正整數。')
-        if not isinstance(self.use_ack, bool):
-            raise ValueError('use_ack 必須為布林值。')
-        if self.initial_ack_skip < 0:
-            raise ValueError('initial_ack_skip 不得為負數。')
 
 
 class FrameEncoder:
@@ -218,9 +212,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--yolo-device', default=IMAGE_DEFAULTS.yolo_device, help='YOLOv5 推論裝置 (僅 yolo 編碼器使用，預設: %(default)s)')
     parser.add_argument('--yolo-max-det', type=int, default=IMAGE_DEFAULTS.yolo_max_detections, help='YOLOv5 單張影像最大框數 (僅 yolo 編碼器使用，預設: %(default)s)')
     parser.add_argument('--tx-buffer', type=int, default=IMAGE_DEFAULTS.tx_buffer_size, help='傳送端待發緩衝區容量 (幀數，預設: %(default)s)')
-    ack_group = parser.add_mutually_exclusive_group()
-    ack_group.add_argument('--ack', action='store_true', help='強制啟用 chunk 級 ACK（較可靠，但傳輸耗時較長）')
-    ack_group.add_argument('--no-ack', action='store_true', help='強制停用 chunk 級 ACK（降延遲，但可靠度降低）')
     return parser.parse_args()
 
 
@@ -254,13 +245,6 @@ def main() -> None:
     if capture_fps:
         fps_hint = max(fps_hint, capture_fps)
 
-    use_chunk_ack = IMAGE_DEFAULTS.use_chunk_ack
-    if args.ack:
-        use_chunk_ack = True
-    elif args.no_ack:
-        use_chunk_ack = False
-    initial_ack_skip = 1 if use_chunk_ack else 0
-
     try:
         encoder = FrameEncoder(
             EncoderConfig(
@@ -291,8 +275,6 @@ def main() -> None:
         transmitter_config = TransmissionConfig(
             interval=max(args.interval, 0.0),
             buffer_size=max(args.tx_buffer, 1),
-            use_ack=use_chunk_ack,
-            initial_ack_skip=initial_ack_skip,
         )
     except ValueError as exc:
         print(f'無效的傳輸參數: {exc}')
@@ -314,11 +296,7 @@ def main() -> None:
         ser.close()
         return
 
-    protocol = FrameProtocol(
-        use_chunk_ack=transmitter_config.use_ack,
-        ack_timeout=max(args.serial_timeout, 0.0),
-        initial_skip_acks=transmitter_config.initial_ack_skip,
-    )
+    protocol = FrameProtocol()
     transmitter = FrameTransmitter(ser, protocol=protocol, config=transmitter_config)
 
     tx_queue: "queue.Queue[Optional[TransmissionJob]]" = queue.Queue(maxsize=transmitter_config.buffer_size)
