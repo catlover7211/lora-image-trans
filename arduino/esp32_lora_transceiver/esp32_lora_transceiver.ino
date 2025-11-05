@@ -31,8 +31,8 @@ constexpr int TXD2 = 17;
 
 // 緩衝區大小常數
 // USB buffer 需足夠容納單個完整幀 (包含標頭、base64 編碼資料和結束符)
-// 根據 protocol.py: chunk_size 預設 240 bytes，max_payload_size 上限 1920*1080
-// 4096 bytes 足以應付大多數單幀分段（包含標頭和 base64 編碼開銷）
+// Python 端以 chunk_size (預設 240 bytes) 分段發送，經 base64 編碼後約 320 bytes
+// 加上標頭開銷 (FRAME + length + crc)，4096 bytes 足以應付多個連續 chunk
 constexpr size_t USB_BUFFER_SIZE = 4096;
 constexpr size_t LORA_BUFFER_SIZE = 512;
 
@@ -134,6 +134,6 @@ void loop() {
   }
 
   // 短暫延遲，讓出 CPU（使用微秒延遲減少延遲）
-  // 500us = 0.5ms，在 115200 baud 下約可傳輸 5.76 bits (約 0.576 bytes)
+  // 500us = 0.5ms，在 115200 baud 下約可傳輸 57.6 bits (約 7.2 bytes，含起始/停止位)
   delayMicroseconds(500);
 }

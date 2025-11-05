@@ -29,7 +29,7 @@ FRAME <length> <crc> <base64_data>\n
 **欄位說明**:
 - `FRAME`: 固定前綴，用於同步
 - `<length>`: base64 編碼後的資料長度（十進位）
-- `<crc>`: CRC32 校驗碼（8 位十六進位）
+- `<crc>`: CRC32 校驗碼（8 字符十六進位，補零對齊）
 - `<base64_data>`: Base64 編碼的 payload
 - `\n`: 行結束符
 
