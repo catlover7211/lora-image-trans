@@ -33,11 +33,7 @@ void loop() {
 
     // 如果讀到了換行符，代表一個完整的封包已接收
     if (incoming_char == '\n') {
-      // 檢查緩衝區是否以同步標記開頭（0xDE 0xAD 0xBE 0xEF = "\xDE\xAD\xBE\xEF"）
-      // 注意：SYNC_MARKER 是二進制數據，已經由 Python 端的 build_frame() 添加
-      // 我們只需要將完整的封包轉發給 LoRa 模組
-      
-      // 直接轉發整個封包（已包含 SYNC_MARKER）
+      // 直接轉發整個封包到 LoRa（封包已包含 SYNC_MARKER 和完整的幀數據）
       LoRaSerial.print(usb_buffer);
       
       // 除錯日誌（可選）
