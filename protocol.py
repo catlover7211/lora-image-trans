@@ -168,31 +168,26 @@ class FrameProtocol:
     # -------------------------- Decoding helpers --------------------------
     def receive_frame(self, ser: SerialLike, *, block: bool = True, timeout: Optional[float] = None) -> Optional[Frame]:
         """Attempt to read and validate a single ASCII framed payload from *ser*."""
-        # For blocking calls, use the ACK timeout as the base, otherwise non-blocking.
         sync_timeout = timeout if timeout is not None else (self.ack_timeout if block else 0)
 
-        if not self._synced:
-            synced = self._synchronize(ser, timeout=sync_timeout)
-            if not synced:
-                # In non-blocking mode, failure to sync just means no data is ready.
-                # Only set an error if we were actually blocking and timed out.
-                if block and sync_timeout > 0:
-                    self._last_error = "無法同步到封包標記 (超時)"
-                else:
-                    self._last_error = None  # No error, just no data
-                return None
+        if not self._synced and not self._synchronize(ser, timeout=sync_timeout):
+            self._set_error_if_blocking("無法同步到封包標記 (超時)", block, sync_timeout)
+            return None
 
-        # After sync, the rest of the line should arrive quickly. Use a short timeout.
         line_timeout = 0.2 if block else 0
         line = self._read_line(ser, block=block, timeout=line_timeout)
         if line is None:
-            # Similar to sync, only report error if we were expecting data.
-            if block and line_timeout > 0:
-                self._last_error = "同步後讀取資料超時"
-            else:
-                self._last_error = None # No error, just incomplete data
+            self._set_error_if_blocking("同步後讀取資料超時", block, line_timeout)
             return None
 
+        return self._parse_and_validate_frame(line)
+
+    def _set_error_if_blocking(self, error_msg: str, block: bool, timeout: float) -> None:
+        """Set error message only if blocking with timeout, otherwise clear it."""
+        self._last_error = error_msg if (block and timeout > 0) else None
+
+    def _parse_and_validate_frame(self, line: bytes) -> Optional[Frame]:
+        """Parse and validate a frame line, returning Frame or None on error."""
         try:
             text = line.decode("ascii").rstrip("\r\n")
         except UnicodeDecodeError:
@@ -206,83 +201,109 @@ class FrameProtocol:
             return None
 
         parts = text.split(FIELD_SEPARATOR, 3)
-        if len(parts) != 4:
-            self._last_error = "欄位數不正確"
+        if len(parts) != 4 or parts[0] != FRAME_PREFIX:
+            self._last_error = "欄位數不正確" if len(parts) != 4 else "開頭標記錯誤"
             self._resync()
             return None
 
-        prefix, length_str, crc_str, encoded = parts
-        if prefix != FRAME_PREFIX:
-            self._last_error = "開頭標記錯誤"
-            self._resync()
-            return None
-
-        try:
-            encoded_length = int(length_str)
-        except ValueError:
-            self._last_error = "長度欄位不是整數"
-            self._resync()
-            return None
-
-        if encoded_length > len(encoded):
-            # 資料不足，可能被截斷。將其放回緩衝區等待更多資料。
-            self._pending_ascii[:0] = text.encode("ascii")
-            self._last_error = "資料不足，等待更多數據"
-            return None
-
-        if encoded_length < len(encoded):
-            # 資料過多，分割並將多餘部分放回緩衝區
-            overflow = encoded[encoded_length:]
-            encoded = encoded[:encoded_length]
-            self._pending_ascii[:0] = overflow.encode("ascii")
-            self._last_error = f"資料溢出，宣告 {encoded_length} 實際 {len(encoded)} (已處理)"
+        _, length_str, crc_str, encoded = parts
         
-        # 在嚴格模式下，長度必須完全相符
-        if not self._lenient and encoded_length != len(encoded):
-            msg = f"長度不符，宣告 {encoded_length} 實際 {len(encoded)}"
-            self._last_error = msg
-            # 當長度不符時，我們假設整個封包都已損毀，因此不將其放回緩衝區
-            # 而是直接丟棄，等待下一個有效的 FRAME 開頭
-            self._resync()
+        encoded_length = self._parse_length(length_str)
+        if encoded_length is None:
             return None
-        
-        # 如果宣告長度與實際長度不同，但在寬鬆模式下，我們信任宣告的長度
-        if encoded_length != len(encoded):
-            encoded = encoded[:encoded_length]
-            self._last_error = f"長度不符，宣告 {encoded_length} 實際 {len(encoded)} (已修正)"
-        else:
-            self._last_error = None  # 成功解析，清除舊錯誤
+
+        encoded = self._handle_length_mismatch(encoded, encoded_length, text)
+        if encoded is None:
+            return None
 
         if encoded_length > self.max_encoded_size:
             self._last_error = "編碼資料超過上限"
             self._resync()
             return None
 
+        expected_crc = self._parse_crc(crc_str)
+        if expected_crc is None:
+            return None
+
+        payload = self._decode_payload(encoded)
+        if payload is None:
+            return None
+
+        if not self._validate_crc(payload, expected_crc):
+            return None
+
+        self._last_error = None
+        stats = FrameStats(payload_size=len(payload), stuffed_size=len(encoded), crc=expected_crc)
+        self._resync()
+        return Frame(payload=payload, stats=stats)
+
+    def _parse_length(self, length_str: str) -> Optional[int]:
+        """Parse length field, return None on error."""
         try:
-            expected_crc = int(crc_str, 16)
+            return int(length_str)
+        except ValueError:
+            self._last_error = "長度欄位不是整數"
+            self._resync()
+            return None
+
+    def _parse_crc(self, crc_str: str) -> Optional[int]:
+        """Parse CRC field, return None on error."""
+        try:
+            return int(crc_str, 16)
         except ValueError:
             self._last_error = "CRC 欄位格式錯誤"
             self._resync()
             return None
 
+    def _decode_payload(self, encoded: str) -> Optional[bytes]:
+        """Decode base64 payload, return None on error."""
         try:
-            payload = base64.b64decode(encoded.encode("ascii"), validate=True)
+            return base64.b64decode(encoded.encode("ascii"), validate=True)
         except Exception:
             self._last_error = "Base64 解碼失敗"
             self._resync()
             return None
 
+    def _validate_crc(self, payload: bytes, expected_crc: int) -> bool:
+        """Validate CRC, return False on mismatch."""
         actual_crc = zlib.crc32(payload) & 0xFFFFFFFF
         if actual_crc != expected_crc:
             self._last_error = f"CRC 校驗失敗 (預期 {expected_crc:08x}, 實際 {actual_crc:08x})"
             self._resync()
+            return False
+        return True
+
+    def _handle_length_mismatch(self, encoded: str, encoded_length: int, text: str) -> Optional[str]:
+        """Handle cases where declared length doesn't match actual length."""
+        actual_length = len(encoded)
+        
+        if encoded_length > actual_length:
+            # Data incomplete, put back in buffer
+            self._pending_ascii[:0] = text.encode("ascii")
+            self._last_error = "資料不足，等待更多數據"
             return None
 
-        stats = FrameStats(
-            payload_size=len(payload), stuffed_size=len(encoded), crc=expected_crc
-        )
-        self._resync()
-        return Frame(payload=payload, stats=stats)
+        if encoded_length < actual_length:
+            # Data overflow, split and put extra back in buffer
+            overflow = encoded[encoded_length:]
+            encoded = encoded[:encoded_length]
+            self._pending_ascii[:0] = overflow.encode("ascii")
+            self._last_error = f"資料溢出，宣告 {encoded_length} 實際 {actual_length} (已處理)"
+
+        # Strict mode: lengths must match exactly
+        if not self._lenient and encoded_length != actual_length:
+            self._last_error = f"長度不符，宣告 {encoded_length} 實際 {actual_length}"
+            self._resync()
+            return None
+        
+        # Lenient mode: trust declared length
+        if encoded_length != actual_length:
+            encoded = encoded[:encoded_length]
+            self._last_error = f"長度不符，宣告 {encoded_length} 實際 {actual_length} (已修正)"
+        else:
+            self._last_error = None
+
+        return encoded
 
     def _read_serial_chunk(self, ser: SerialLike, *, wait: bool) -> bytes:
         """Read a small chunk from the serial port respecting blocking preference."""
@@ -322,17 +343,16 @@ class FrameProtocol:
         wait_for_data = timeout is None or timeout > 0
 
         while True:
-            idx = buffer.find(SYNC_MARKER)
-            if idx != -1:
-                del buffer[:idx + marker_len]
-                self._pending_ascii.extend(buffer)
-                self._synced = True
+            # Check for sync marker in current buffer
+            if self._try_find_sync_marker(buffer, marker_len):
                 return True
 
+            # Check timeout
             if timeout is not None and (time.monotonic() - start_time) > timeout:
                 self._pending_ascii[:0] = buffer
                 return False
 
+            # Read more data
             chunk = self._read_serial_chunk(ser, wait=wait_for_data)
             if not chunk:
                 if not wait_for_data:
@@ -342,8 +362,19 @@ class FrameProtocol:
                 continue
 
             buffer.extend(chunk)
+            # Prevent buffer from growing too large
             if len(buffer) > self.max_encoded_size * 2:
                 buffer = buffer[-(self.max_encoded_size * 2):]
+
+    def _try_find_sync_marker(self, buffer: bytearray, marker_len: int) -> bool:
+        """Try to find sync marker in buffer, updating state if found."""
+        idx = buffer.find(SYNC_MARKER)
+        if idx != -1:
+            del buffer[:idx + marker_len]
+            self._pending_ascii.extend(buffer)
+            self._synced = True
+            return True
+        return False
 
     def _wait_for_ack(self, ser: SerialLike) -> bool:
         """Wait for an ACK message from the remote."""

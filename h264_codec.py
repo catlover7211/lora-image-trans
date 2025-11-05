@@ -1,6 +1,7 @@
 """Utilities for video encoding and decoding over the serial protocol."""
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any, Iterable, List, Literal, Optional, Tuple
@@ -18,6 +19,36 @@ from av.video.frame import PictureType
 VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg", "contour", "yolo", "cs"]
 
 DetectionBox = Tuple[float, float, float, float, float]
+
+
+class BaseEncoder(ABC):
+    """Base class for all encoders with common validation logic."""
+    
+    def __init__(self, width: int, height: int) -> None:
+        if width <= 0 or height <= 0:
+            raise ValueError("影像尺寸必須為正整數")
+        self.width = width
+        self.height = height
+    
+    def validate_frame(self, frame_bgr: np.ndarray) -> None:
+        """Validate input frame dimensions and format."""
+        if frame_bgr.shape[0] != self.height or frame_bgr.shape[1] != self.width:
+            raise ValueError("輸入影像尺寸與編碼器不符")
+        if frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3:
+            raise ValueError("輸入影像需為 BGR 三通道格式")
+    
+    @abstractmethod
+    def encode(self, frame_bgr: np.ndarray) -> List[EncodedChunk]:
+        """Encode a frame and return encoded chunks."""
+        pass
+    
+    def force_keyframe(self) -> None:
+        """Request the next frame to be encoded as a keyframe (optional)."""
+        pass
+    
+    def force_config_repeat(self, count: int = 3) -> None:
+        """Schedule codec configuration to be resent (optional)."""
+        pass
 
 
 @dataclass(frozen=True)
@@ -127,7 +158,7 @@ class EncodedChunk:
 MIN_ENCODER_BITRATE = 10_000
 
 
-class H264Encoder:
+class H264Encoder(BaseEncoder):
     """Encodes numpy image frames into H.264/H.265/AV1 packets."""
 
     def __init__(
@@ -140,10 +171,10 @@ class H264Encoder:
         keyframe_interval: int = 30,
         codec: VideoCodec = "h264",
     ) -> None:
+        super().__init__(width, height)
+        
         if codec == "wavelet":
             raise ValueError("wavelet 編碼請使用 WaveletEncoder")
-        if width <= 0 or height <= 0:
-            raise ValueError("影像尺寸必須為正整數")
         if fps <= 0:
             raise ValueError("fps 必須為正數")
         if bitrate < MIN_ENCODER_BITRATE:
@@ -152,26 +183,33 @@ class H264Encoder:
                 "請提高 bitrate 或改用較低解析度/幀率。"
             )
 
-        self.width = width
-        self.height = height
         self.fps = fps
         self.codec_name: VideoCodec = codec
+        self.codec: Any = self._create_codec_context(codec, width, height, fps, bitrate)
+        self.keyframe_interval = max(keyframe_interval, 1)
+        
+        self._configure_codec(codec, self.keyframe_interval)
+        self.codec.open()
+        
+        self._frame_index = 0
+        self._config_burst = 3
+        self._force_config = True
 
-        if codec == "h265":
-            encoder_name = "libx265"
-            fallback_name = "hevc"
-        elif codec == "av1":
-            encoder_name = "libaom-av1"
-            fallback_name = "av1"
-        else:
-            encoder_name = "libx264"
-            fallback_name = "h264"
+    def _create_codec_context(
+        self,
+        codec: VideoCodec,
+        width: int,
+        height: int,
+        fps: float,
+        bitrate: int
+    ) -> Any:
+        """Create and configure codec context."""
+        encoder_name, fallback_name = self._get_encoder_names(codec)
+        
         try:
             codec_ctx: Any = av.CodecContext.create(encoder_name, "w")
         except Exception:
             codec_ctx = av.CodecContext.create(fallback_name, "w")
-
-        self.codec: Any = codec_ctx
 
         frame_rate = max(int(round(fps)), 1)
         codec_ctx.width = width
@@ -180,88 +218,96 @@ class H264Encoder:
         codec_ctx.framerate = Fraction(frame_rate, 1)
         codec_ctx.pix_fmt = "yuv420p"
         codec_ctx.bit_rate = bitrate
+        
+        return codec_ctx
 
-        gop_size = max(keyframe_interval, 1)
+    @staticmethod
+    def _get_encoder_names(codec: VideoCodec) -> tuple[str, str]:
+        """Get encoder name and fallback for the given codec."""
         if codec == "h265":
-            x265_params = ":".join(
-                [
-                    f"keyint={gop_size}",
-                    f"min-keyint={gop_size}",
-                    "scenecut=0",
-                    "bframes=0",
-                    "repeat-headers=1",
-                    "rc-lookahead=0",
-                    "frame-threads=1",
-                ]
-            )
-            codec_ctx.options = {
-                "preset": "veryfast",
-                "tune": "zerolatency",
-                "x265-params": x265_params,
-            }
+            return "libx265", "hevc"
         elif codec == "av1":
-            codec_ctx.options = {
-                "cpu-used": "8",
-                "end-usage": "cbr",
-                "lag-in-frames": "0",
-                "row-mt": "1",
-                "tile-columns": "0",
-                "tile-rows": "0",
-                "enable-cdef": "1",
-                "usage": "realtime",
-                "kf-max-dist": str(gop_size),
-                "kf-min-dist": str(gop_size),
-            }
+            return "libaom-av1", "av1"
         else:
-            codec_ctx.options = {
-                "preset": "veryfast",
-                "tune": "zerolatency",
-                "profile": "baseline",
-                "x264opts": "no-scenecut",
-            }
-        codec_ctx.gop_size = gop_size
-        codec_ctx.open()
+            return "libx264", "h264"
 
-        self.keyframe_interval = gop_size
-        self._frame_index = 0
-        self._config_burst = 3  # how many upcoming frames should resend config
-        self._force_config = True
+    def _configure_codec(self, codec: VideoCodec, gop_size: int) -> None:
+        """Configure codec-specific options."""
+        if codec == "h265":
+            self._configure_h265(gop_size)
+        elif codec == "av1":
+            self._configure_av1(gop_size)
+        else:
+            self._configure_h264(gop_size)
+        
+        self.codec.gop_size = gop_size
+
+    def _configure_h265(self, gop_size: int) -> None:
+        """Configure H.265 specific options."""
+        x265_params = ":".join([
+            f"keyint={gop_size}",
+            f"min-keyint={gop_size}",
+            "scenecut=0",
+            "bframes=0",
+            "repeat-headers=1",
+            "rc-lookahead=0",
+            "frame-threads=1",
+        ])
+        self.codec.options = {
+            "preset": "veryfast",
+            "tune": "zerolatency",
+            "x265-params": x265_params,
+        }
+
+    def _configure_av1(self, gop_size: int) -> None:
+        """Configure AV1 specific options."""
+        self.codec.options = {
+            "cpu-used": "8",
+            "end-usage": "cbr",
+            "lag-in-frames": "0",
+            "row-mt": "1",
+            "tile-columns": "0",
+            "tile-rows": "0",
+            "enable-cdef": "1",
+            "usage": "realtime",
+            "kf-max-dist": str(gop_size),
+            "kf-min-dist": str(gop_size),
+        }
+
+    def _configure_h264(self, gop_size: int) -> None:
+        """Configure H.264 specific options."""
+        self.codec.options = {
+            "preset": "veryfast",
+            "tune": "zerolatency",
+            "profile": "baseline",
+            "x264opts": "no-scenecut",
+        }
 
     def encode(self, frame_bgr: np.ndarray) -> List[EncodedChunk]:
         """Encode a BGR frame and return zero or more codec chunks."""
-        if frame_bgr.shape[0] != self.height or frame_bgr.shape[1] != self.width:
-            raise ValueError("輸入影像尺寸與編碼器不符")
-        if frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3:
-            raise ValueError("輸入影像需為 BGR 三通道格式")
+        self.validate_frame(frame_bgr)
 
         chunks: List[EncodedChunk] = []
-
         is_keyframe_due = (self._frame_index % self.keyframe_interval == 0)
+        
         if is_keyframe_due:
             self._force_config = True
 
+        # Add config chunk if needed
         if self.codec.extradata and (self._force_config or self._config_burst > 0):
-            chunks.append(
-                EncodedChunk(
-                    data=self.codec.extradata,
-                    codec=self.codec_name,
-                    is_config=True,
-                    is_keyframe=True,
-                )
-            )
+            chunks.append(self._create_config_chunk())
             if self._config_burst > 0:
                 self._config_burst -= 1
             self._force_config = False
 
+        # Encode video frame
         video_frame = av.VideoFrame.from_ndarray(frame_bgr, format="bgr24")
         if is_keyframe_due:
-            try:
-                video_frame.pict_type = PictureType.I
-            except (AttributeError, TypeError):
-                # 部分後端僅接受整數或不支援強制設定，忽略錯誤
-                pass
+            self._set_keyframe_flag(video_frame)
+        
         self._frame_index += 1
 
+        # Get encoded packets
         for packet in self.codec.encode(video_frame):
             chunks.append(
                 EncodedChunk(
@@ -272,6 +318,24 @@ class H264Encoder:
                 )
             )
         return chunks
+
+    def _create_config_chunk(self) -> EncodedChunk:
+        """Create configuration chunk."""
+        return EncodedChunk(
+            data=self.codec.extradata,
+            codec=self.codec_name,
+            is_config=True,
+            is_keyframe=True,
+        )
+
+    @staticmethod
+    def _set_keyframe_flag(video_frame: Any) -> None:
+        """Set keyframe flag on video frame (with error handling)."""
+        try:
+            video_frame.pict_type = PictureType.I
+        except (AttributeError, TypeError):
+            # Some backends only accept integers or don't support forced setting
+            pass
 
     def flush(self) -> List[EncodedChunk]:
         """Flush any delayed packets from the encoder."""
@@ -299,24 +363,20 @@ class H264Encoder:
         self._config_burst = max(self._config_burst, count)
 
 
-class JPEGEncoder:
+class JPEGEncoder(BaseEncoder):
     """Encodes numpy image frames into baseline JPEG payloads."""
 
     def __init__(self, width: int, height: int, *, quality: int = 85) -> None:
-        if width <= 0 or height <= 0:
-            raise ValueError("影像尺寸必須為正整數")
+        super().__init__(width, height)
+        
         if not (1 <= quality <= 100):
             raise ValueError("JPEG 品質需介於 1 到 100")
-        self.width = width
-        self.height = height
+        
         self.quality = int(quality)
         self._encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), self.quality]
 
     def encode(self, frame_bgr: np.ndarray) -> List[EncodedChunk]:
-        if frame_bgr.shape[0] != self.height or frame_bgr.shape[1] != self.width:
-            raise ValueError("輸入影像尺寸與編碼器不符")
-        if frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3:
-            raise ValueError("輸入影像需為 BGR 三通道格式")
+        self.validate_frame(frame_bgr)
 
         success, buffer = cv2.imencode(".jpg", frame_bgr, self._encode_params)
         if not success:
@@ -330,14 +390,8 @@ class JPEGEncoder:
         )
         return [chunk]
 
-    def force_keyframe(self) -> None:
-        return
 
-    def force_config_repeat(self, count: int = 3) -> None:
-        return
-
-
-class ContourEncoder:
+class ContourEncoder(BaseEncoder):
     """Approximates frame contours with a truncated Fourier series."""
 
     VERSION = 1
@@ -345,75 +399,32 @@ class ContourEncoder:
     COEFF_STRUCT = struct.Struct("<ff")
 
     def __init__(self, width: int, height: int, *, samples: int = 128, coefficients: int = 16) -> None:
-        if width <= 0 or height <= 0:
-            raise ValueError("影像尺寸必須為正整數")
+        super().__init__(width, height)
+        
         if samples <= 0:
             raise ValueError("samples 必須為正整數")
         if coefficients <= 0:
             raise ValueError("coefficients 必須為正整數")
-        self.width = width
-        self.height = height
+        
         self.samples = samples
         max_coeffs = samples // 2 + 1
         self.coefficients = min(coefficients, max(1, max_coeffs))
 
     def encode(self, frame_bgr: np.ndarray) -> List[EncodedChunk]:
-        if frame_bgr.shape[0] != self.height or frame_bgr.shape[1] != self.width:
-            raise ValueError("輸入影像尺寸與編碼器不符")
-        if frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3:
-            raise ValueError("輸入影像需為 BGR 三通道格式")
+        self.validate_frame(frame_bgr)
 
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-
-        # 使用自適應二值化，將影像轉為黑白，白色為前景
         bw = cv2.adaptiveThreshold(
             gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
         )
-
-        # 尋找二值化影像中的輪廓
         contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
-        if not contours:
-            center = np.array([self.width / 2.0, self.height / 2.0], dtype=np.float32)
-            radii_samples = np.zeros(self.samples, dtype=np.float32)
-        else:
-            largest = max(contours, key=cv2.contourArea)
-            points = largest.reshape(-1, 2).astype(np.float32)
-            center = points.mean(axis=0)
-            vectors = points - center
-            norms = np.linalg.norm(vectors, axis=1)
-            if np.all(norms == 0):
-                radii_samples = np.zeros(self.samples, dtype=np.float32)
-            else:
-                angles = np.mod(np.arctan2(vectors[:, 1], vectors[:, 0]) + 2 * np.pi, 2 * np.pi)
-                order = np.argsort(angles)
-                angles_sorted = angles[order]
-                radii_sorted = norms[order]
-                # 若角度重複，np.interp 仍可處理；擴展 2π 週期確保補間
-                angles_ext = np.concatenate([angles_sorted, angles_sorted + 2 * np.pi])
-                radii_ext = np.concatenate([radii_sorted, radii_sorted])
-                sample_angles = np.linspace(0.0, 2 * np.pi, self.samples, endpoint=False, dtype=np.float32)
-                radii_samples = np.interp(sample_angles, angles_ext, radii_ext).astype(np.float32)
-
+        center, radii_samples = self._extract_contour_features(contours)
         spectrum = np.fft.rfft(radii_samples)
-        keep = min(self.coefficients, spectrum.shape[0])
-        kept_coeffs = spectrum[:keep]
+        kept_coeffs = spectrum[:self.coefficients]
 
-        header = self.HEADER_STRUCT.pack(
-            self.VERSION,
-            self.width,
-            self.height,
-            self.samples,
-            float(center[0]),
-            float(center[1]),
-            keep,
-        )
-
-        body = bytearray(self.COEFF_STRUCT.size * keep)
-        offset = 0
-        for coeff in kept_coeffs:
-            struct.pack_into("<ff", body, offset, float(np.real(coeff)), float(np.imag(coeff)))
-            offset += self.COEFF_STRUCT.size
+        header = self._pack_header(center, len(kept_coeffs))
+        body = self._pack_coefficients(kept_coeffs)
 
         chunk = EncodedChunk(
             data=header + bytes(body),
@@ -423,43 +434,85 @@ class ContourEncoder:
         )
         return [chunk]
 
-    def force_keyframe(self) -> None:
-        return
+    def _extract_contour_features(self, contours) -> tuple[np.ndarray, np.ndarray]:
+        """Extract center and radii samples from contours."""
+        if not contours:
+            center = np.array([self.width / 2.0, self.height / 2.0], dtype=np.float32)
+            radii_samples = np.zeros(self.samples, dtype=np.float32)
+            return center, radii_samples
 
-    def force_config_repeat(self, count: int = 3) -> None:
-        return
+        largest = max(contours, key=cv2.contourArea)
+        points = largest.reshape(-1, 2).astype(np.float32)
+        center = points.mean(axis=0)
+        
+        vectors = points - center
+        norms = np.linalg.norm(vectors, axis=1)
+        
+        if np.all(norms == 0):
+            radii_samples = np.zeros(self.samples, dtype=np.float32)
+        else:
+            radii_samples = self._interpolate_radii(vectors, norms)
+        
+        return center, radii_samples
+
+    def _interpolate_radii(self, vectors: np.ndarray, norms: np.ndarray) -> np.ndarray:
+        """Interpolate radii values for uniform angular sampling."""
+        angles = np.mod(np.arctan2(vectors[:, 1], vectors[:, 0]) + 2 * np.pi, 2 * np.pi)
+        order = np.argsort(angles)
+        angles_sorted = angles[order]
+        radii_sorted = norms[order]
+        
+        # Extend 2π period for interpolation
+        angles_ext = np.concatenate([angles_sorted, angles_sorted + 2 * np.pi])
+        radii_ext = np.concatenate([radii_sorted, radii_sorted])
+        
+        sample_angles = np.linspace(0.0, 2 * np.pi, self.samples, endpoint=False, dtype=np.float32)
+        return np.interp(sample_angles, angles_ext, radii_ext).astype(np.float32)
+
+    def _pack_header(self, center: np.ndarray, num_coeffs: int) -> bytes:
+        """Pack header information."""
+        return self.HEADER_STRUCT.pack(
+            self.VERSION,
+            self.width,
+            self.height,
+            self.samples,
+            float(center[0]),
+            float(center[1]),
+            num_coeffs,
+        )
+
+    def _pack_coefficients(self, coeffs: np.ndarray) -> bytearray:
+        """Pack Fourier coefficients."""
+        body = bytearray(self.COEFF_STRUCT.size * len(coeffs))
+        offset = 0
+        for coeff in coeffs:
+            struct.pack_into("<ff", body, offset, float(np.real(coeff)), float(np.imag(coeff)))
+            offset += self.COEFF_STRUCT.size
+        return body
 
 
-class DetectionEncoder:
+class DetectionEncoder(BaseEncoder):
     """Serialize normalized bounding boxes into protocol payloads."""
 
     VERSION = 1
     HEADER_STRUCT = struct.Struct("<BHHB")
     BOX_STRUCT = struct.Struct("<fffff")
 
-    def __init__(self, width: int, height: int) -> None:
-        if width <= 0 or height <= 0:
-            raise ValueError("影像尺寸必須為正整數")
-        self.width = width
-        self.height = height
-
     def encode(self, boxes: List[DetectionBox]) -> List[EncodedChunk]:
         count = min(len(boxes), 255)
-        header = self.HEADER_STRUCT.pack(
-            self.VERSION,
-            self.width,
-            self.height,
-            count,
-        )
+        header = self.HEADER_STRUCT.pack(self.VERSION, self.width, self.height, count)
+        
         body = bytearray(self.BOX_STRUCT.size * count)
         for idx, (cx, cy, w, h, conf) in enumerate(boxes[:count]):
-            cx_c = float(np.clip(cx, 0.0, 1.0))
-            cy_c = float(np.clip(cy, 0.0, 1.0))
-            w_c = float(np.clip(w, 0.0, 1.0))
-            h_c = float(np.clip(h, 0.0, 1.0))
-            conf_c = float(np.clip(conf, 0.0, 1.0))
             offset = idx * self.BOX_STRUCT.size
-            struct.pack_into("<fffff", body, offset, cx_c, cy_c, w_c, h_c, conf_c)
+            struct.pack_into(
+                "<fffff", body, offset,
+                float(np.clip(cx, 0.0, 1.0)),
+                float(np.clip(cy, 0.0, 1.0)),
+                float(np.clip(w, 0.0, 1.0)),
+                float(np.clip(h, 0.0, 1.0)),
+                float(np.clip(conf, 0.0, 1.0))
+            )
 
         chunk = EncodedChunk(
             data=header + bytes(body),
@@ -469,14 +522,8 @@ class DetectionEncoder:
         )
         return [chunk]
 
-    def force_keyframe(self) -> None:
-        return
 
-    def force_config_repeat(self, count: int = 3) -> None:
-        return
-
-
-class YOLODetectionEncoder:
+class YOLODetectionEncoder(BaseEncoder):
     """Run YOLOv5 on frames to produce bounding boxes."""
 
     def __init__(
@@ -491,15 +538,15 @@ class YOLODetectionEncoder:
         max_detections: int,
         detector: Optional[Any] = None,
     ) -> None:
-        self.width = width
-        self.height = height
+        super().__init__(width, height)
+        
         self.packetizer = DetectionEncoder(width, height)
         self.preview_frame = np.zeros((height, width, 3), dtype=np.uint8)
+        
         if detector is not None:
             self.detector = detector
         else:
             from yolo_detector import YOLOv5Detector
-
             self.detector = YOLOv5Detector(
                 weights_path=weights_path,
                 confidence=confidence,
@@ -509,13 +556,18 @@ class YOLODetectionEncoder:
             )
 
     def encode(self, frame_bgr: np.ndarray) -> List[EncodedChunk]:
-        if frame_bgr.shape[0] != self.height or frame_bgr.shape[1] != self.width:
-            raise ValueError("輸入影像尺寸與編碼器不符")
-        if frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3:
-            raise ValueError("輸入影像需為 BGR 三通道格式")
+        self.validate_frame(frame_bgr)
 
         detections = self.detector.detect(frame_bgr)
+        overlay = self._create_detection_overlay(frame_bgr, detections)
+        self.preview_frame = overlay
+        
+        return self.packetizer.encode(detections)
+
+    def _create_detection_overlay(self, frame_bgr: np.ndarray, detections: List[DetectionBox]) -> np.ndarray:
+        """Create an overlay image with detection boxes."""
         overlay = frame_bgr.copy()
+        
         for cx, cy, w, h, conf in detections:
             abs_w = max(int(round(w * self.width)), 1)
             abs_h = max(int(round(h * self.height)), 1)
@@ -523,22 +575,18 @@ class YOLODetectionEncoder:
             y1 = int(round(cy * self.height - abs_h / 2))
             x2 = x1 + abs_w
             y2 = y1 + abs_h
+            
+            # Clip coordinates
             x1 = int(np.clip(x1, 0, self.width - 1))
             y1 = int(np.clip(y1, 0, self.height - 1))
             x2 = int(np.clip(x2, 0, self.width - 1))
             y2 = int(np.clip(y2, 0, self.height - 1))
+            
             cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), thickness=2)
             label = f"{conf:.2f}"
             cv2.putText(overlay, label, (x1, max(0, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
 
-        self.preview_frame = overlay
-        return self.packetizer.encode(detections)
-
-    def force_keyframe(self) -> None:
-        return
-
-    def force_config_repeat(self, count: int = 3) -> None:
-        return
+        return overlay
 
 
 def _bgr_to_ycocg(frame: np.ndarray) -> np.ndarray:
@@ -632,19 +680,18 @@ def _haar_inverse(coeffs: np.ndarray, levels: int) -> np.ndarray:
     return result
 
 
-class WaveletEncoder:
+class WaveletEncoder(BaseEncoder):
     """Simple YCoCg + Haar wavelet encoder producing intra-only frames."""
 
     VERSION = 1
     HEADER_STRUCT = struct.Struct("<BHHHBB")  # version, width, height, quant, levels, channels
 
     def __init__(self, width: int, height: int, *, levels: int = 2, quant_step: int = 12) -> None:
-        if width <= 0 or height <= 0:
-            raise ValueError("影像尺寸必須為正整數")
+        super().__init__(width, height)
+        
         if quant_step <= 0:
             raise ValueError("量化步階必須為正整數")
-        self.width = width
-        self.height = height
+        
         self.quant_step = quant_step
         self.levels = min(max(0, levels), _max_wavelet_levels(width, height))
 
@@ -653,13 +700,16 @@ class WaveletEncoder:
             raise ValueError("輸入影像尺寸與編碼器不符")
 
         ycocg = _bgr_to_ycocg(frame_bgr)
-        coeffs = []
-        for c in range(3):
-            forward = _haar_forward(ycocg[..., c], self.levels)
-            quantized = np.rint(forward / self.quant_step).astype(np.int16)
-            coeffs.append(quantized)
+        
+        # Process each channel
+        coeffs = [
+            np.rint(_haar_forward(ycocg[..., c], self.levels) / self.quant_step).astype(np.int16)
+            for c in range(3)
+        ]
+        
         quantized_stack = np.stack(coeffs, axis=2)
         payload_body = zlib.compress(quantized_stack.tobytes(), level=6)
+        
         header = self.HEADER_STRUCT.pack(
             self.VERSION,
             self.width,
@@ -668,6 +718,7 @@ class WaveletEncoder:
             self.levels,
             3,
         )
+        
         chunk = EncodedChunk(
             data=header + payload_body,
             codec="wavelet",
@@ -675,14 +726,6 @@ class WaveletEncoder:
             is_config=False,
         )
         return [chunk]
-
-    def force_keyframe(self) -> None:
-        # All frames are intra-only; nothing to do.
-        return
-
-    def force_config_repeat(self, count: int = 3) -> None:
-        # Wavelet 編碼為每幀獨立，不需要額外的設定封包。
-        return
 
 
 class WaveletDecoder:
@@ -726,7 +769,7 @@ class WaveletDecoder:
         return []
 
 
-class CSEncoder:
+class CSEncoder(BaseEncoder):
     """
     Compressed Sensing encoder using a random Gaussian measurement matrix
     on the DCT coefficients of the image.
@@ -743,23 +786,18 @@ class CSEncoder:
         measurement_ratio: float = 0.3,
         seed: Optional[int] = None
     ) -> None:
-        if width <= 0 or height <= 0:
-            raise ValueError("影像尺寸必須為正整數")
+        super().__init__(width, height)
+        
         if not (0 < measurement_ratio < 1):
             raise ValueError("測量比率必須介於 0 和 1 之間")
 
-        self.width = width
-        self.height = height
         self.measurement_ratio = measurement_ratio
-
-        if seed is None:
-            self.seed = np.random.randint(0, 2**32 - 1)
-        else:
-            self.seed = seed % (2**32)
+        self.seed = seed % (2**32) if seed is not None else np.random.randint(0, 2**32 - 1)
 
         signal_length = width * height
         self.num_measurements = max(1, int(signal_length * measurement_ratio))
 
+        # Create measurement matrix
         rng = np.random.RandomState(self.seed)
         self.measurement_matrix = rng.randn(self.num_measurements, signal_length).astype(np.float32)
         self.measurement_matrix /= np.linalg.norm(self.measurement_matrix, axis=1, keepdims=True)
@@ -770,17 +808,13 @@ class CSEncoder:
         return dct(dct(block.T, norm='ortho').T, norm='ortho')
 
     def encode(self, frame_bgr: np.ndarray) -> List[EncodedChunk]:
-        if frame_bgr.shape[0] != self.height or frame_bgr.shape[1] != self.width:
-            raise ValueError("輸入影像尺寸與編碼器不符")
+        self.validate_frame(frame_bgr)
 
         measurements_list = []
         for c in range(3):
             channel = frame_bgr[:, :, c].astype(np.float32)
-            # Apply 2D DCT to make the signal sparse
             dct_coeffs = self._dct2(channel)
-            # Flatten to a vector
             dct_vector = dct_coeffs.flatten()
-            # Take measurements
             measurements = self.measurement_matrix @ dct_vector
             measurements_list.append(measurements)
 
@@ -807,12 +841,6 @@ class CSEncoder:
         )
         return [chunk]
 
-    def force_keyframe(self) -> None:
-        return
-
-    def force_config_repeat(self, count: int = 3) -> None:
-        return
-
 
 class CSDecoder:
     """
@@ -836,6 +864,81 @@ class CSDecoder:
         """Inverse 2D DCT transform."""
         return idct(idct(coeffs.T, norm='ortho').T, norm='ortho')
 
+    def decode_chunk(self, chunk: EncodedChunk) -> np.ndarray:
+        data = chunk.data
+        if len(data) <= self.HEADER_STRUCT.size:
+            raise RuntimeError("CS 資料長度不正確")
+
+        header = data[:self.HEADER_STRUCT.size]
+        version, width, height, num_measurements, seed_high, seed_low = self.HEADER_STRUCT.unpack(header)
+
+        # Version dispatch
+        if version == 2:
+            return self._decode_v2(data)
+        elif version in (0, 1):
+            return self._decode_legacy(data)
+        
+        raise RuntimeError(f"CS 版本不支援: {version}")
+
+    def _decode_legacy(self, data: bytes) -> np.ndarray:
+        """Decoder for legacy versions 0 and 1."""
+        _ver, width, height, num_measurements, seed_high, seed_low = self.HEADER_STRUCT.unpack_from(data)
+        seed = (seed_high << 16) | seed_low
+
+        measurements = self._decompress_measurements(data, num_measurements, "legacy")
+        measurement_matrix = self._create_measurement_matrix(seed, num_measurements, width * height)
+
+        reconstructed_channels = [
+            self._reconstruct_legacy(measurements[c], measurement_matrix).reshape((height, width))
+            for c in range(3)
+        ]
+        
+        frame_bgr = np.stack(reconstructed_channels, axis=2)
+        return np.clip(frame_bgr, 0, 255).astype(np.uint8)
+
+    def _decode_v2(self, data: bytes) -> np.ndarray:
+        """Decoder for new version 2."""
+        _ver, width, height, num_measurements, seed_high, seed_low = self.HEADER_STRUCT.unpack_from(data)
+        seed = (seed_high << 16) | seed_low
+
+        measurements = self._decompress_measurements(data, num_measurements, "v2")
+        measurement_matrix = self._create_measurement_matrix(seed, num_measurements, width * height)
+
+        n_nonzero = self.n_nonzero_coeffs or max(1, int(num_measurements * 0.1))
+        omp = OrthogonalMatchingPursuit(n_nonzero_coefs=n_nonzero)
+        
+        reconstructed_channels = []
+        for c in range(3):
+            omp.fit(measurement_matrix, measurements[c])
+            dct_coeffs = omp.coef_.reshape((height, width))
+            channel = self._idct2(dct_coeffs)
+            reconstructed_channels.append(channel)
+
+        frame_bgr = np.stack(reconstructed_channels, axis=2)
+        return np.clip(frame_bgr, 0, 255).astype(np.uint8)
+
+    def _decompress_measurements(self, data: bytes, num_measurements: int, version: str) -> np.ndarray:
+        """Decompress and validate measurements."""
+        compressed = data[self.HEADER_STRUCT.size:]
+        try:
+            decompressed = zlib.decompress(compressed)
+        except zlib.error as exc:
+            raise RuntimeError(f"CS ({version}) 解壓失敗: {exc}") from exc
+
+        expected_bytes = 3 * num_measurements * np.dtype(np.int16).itemsize
+        if len(decompressed) != expected_bytes:
+            raise RuntimeError(f"CS ({version}) 解壓後長度不符: 應為 {expected_bytes}, 實際 {len(decompressed)}")
+
+        return np.frombuffer(decompressed, dtype=np.int16).reshape((3, num_measurements)).astype(np.float32)
+
+    @staticmethod
+    def _create_measurement_matrix(seed: int, num_measurements: int, signal_length: int) -> np.ndarray:
+        """Create measurement matrix from seed."""
+        rng = np.random.RandomState(seed)
+        measurement_matrix = rng.randn(num_measurements, signal_length).astype(np.float32)
+        measurement_matrix /= np.linalg.norm(measurement_matrix, axis=1, keepdims=True)
+        return measurement_matrix
+
     def _reconstruct_legacy(
         self,
         measurements: np.ndarray,
@@ -855,93 +958,6 @@ class CSDecoder:
             except np.linalg.LinAlgError:
                 signal = np.zeros(n, dtype=np.float32)
         return signal
-
-    def decode_chunk(self, chunk: EncodedChunk) -> np.ndarray:
-        data = chunk.data
-        if len(data) <= self.HEADER_STRUCT.size:
-            raise RuntimeError("CS 資料長度不正確")
-
-        header = data[:self.HEADER_STRUCT.size]
-        version, width, height, num_measurements, seed_high, seed_low = self.HEADER_STRUCT.unpack(header)
-
-        # --- Version dispatch ---
-        if version == 2:
-            return self._decode_v2(data)
-        if version in (0, 1):
-            return self._decode_legacy(data)
-        
-        raise RuntimeError(f"CS 版本不支援: {version}")
-
-    def _decode_legacy(self, data: bytes) -> np.ndarray:
-        """Decoder for legacy versions 0 and 1."""
-        _ver, width, height, num_measurements, seed_high, seed_low = self.HEADER_STRUCT.unpack_from(data)
-        seed = (seed_high << 16) | seed_low
-
-        compressed = data[self.HEADER_STRUCT.size:]
-        try:
-            decompressed = zlib.decompress(compressed)
-        except zlib.error as exc:
-            raise RuntimeError(f"CS (legacy) 解壓失敗: {exc}") from exc
-
-        expected_bytes = 3 * num_measurements * np.dtype(np.int16).itemsize
-        if len(decompressed) != expected_bytes:
-            raise RuntimeError(f"CS (legacy) 解壓後長度不符: 應為 {expected_bytes}, 實際 {len(decompressed)}")
-
-        measurements = np.frombuffer(decompressed, dtype=np.int16).reshape((3, num_measurements)).astype(np.float32)
-
-        signal_length = width * height
-        rng = np.random.RandomState(seed)
-        measurement_matrix = rng.randn(num_measurements, signal_length).astype(np.float32)
-        row_norms = np.linalg.norm(measurement_matrix, axis=1, keepdims=True)
-        measurement_matrix /= (row_norms + 1e-8)
-
-        reconstructed_channels = []
-        for c in range(3):
-            signal = self._reconstruct_legacy(measurements[c], measurement_matrix)
-            channel = signal.reshape((height, width))
-            reconstructed_channels.append(channel)
-        
-        frame_bgr = np.stack(reconstructed_channels, axis=2)
-        return np.clip(frame_bgr, 0, 255).astype(np.uint8)
-
-    def _decode_v2(self, data: bytes) -> np.ndarray:
-        """Decoder for new version 2."""
-        _ver, width, height, num_measurements, seed_high, seed_low = self.HEADER_STRUCT.unpack_from(data)
-        seed = (seed_high << 16) | seed_low
-
-        compressed = data[self.HEADER_STRUCT.size:]
-        try:
-            decompressed = zlib.decompress(compressed)
-        except zlib.error as exc:
-            raise RuntimeError(f"CS (v2) 解壓失敗: {exc}") from exc
-
-        expected_bytes = 3 * num_measurements * np.dtype(np.int16).itemsize
-        if len(decompressed) != expected_bytes:
-            raise RuntimeError(f"CS (v2) 解壓後長度不符: 應為 {expected_bytes}, 實際 {len(decompressed)}")
-
-        measurements = np.frombuffer(decompressed, dtype=np.int16).reshape((3, num_measurements)).astype(np.float32)
-
-        signal_length = width * height
-        rng = np.random.RandomState(seed)
-        measurement_matrix = rng.randn(num_measurements, signal_length).astype(np.float32)
-        measurement_matrix /= np.linalg.norm(measurement_matrix, axis=1, keepdims=True)
-
-        if self.n_nonzero_coeffs is None:
-            n_nonzero = max(1, int(num_measurements * 0.1))
-        else:
-            n_nonzero = self.n_nonzero_coeffs
-        omp = OrthogonalMatchingPursuit(n_nonzero_coefs=n_nonzero)
-        
-        reconstructed_channels = []
-        for c in range(3):
-            omp.fit(measurement_matrix, measurements[c])
-            dct_coeffs_vector = omp.coef_
-            dct_coeffs = dct_coeffs_vector.reshape((height, width))
-            channel = self._idct2(dct_coeffs)
-            reconstructed_channels.append(channel)
-
-        frame_bgr = np.stack(reconstructed_channels, axis=2)
-        return np.clip(frame_bgr, 0, 255).astype(np.uint8)
 
 
 class ContourDecoder:
