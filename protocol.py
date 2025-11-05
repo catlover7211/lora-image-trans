@@ -170,21 +170,25 @@ class FrameProtocol:
         # For blocking calls, use the ACK timeout as the base, otherwise non-blocking.
         sync_timeout = timeout if timeout is not None else (self.ack_timeout if block else 0)
         
-        if not self._synchronize(ser, timeout=sync_timeout):
+        synced = self._synchronize(ser, timeout=sync_timeout)
+        if not synced:
+            # In non-blocking mode, failure to sync just means no data is ready.
+            # Only set an error if we were actually blocking and timed out.
             if block and sync_timeout > 0:
                 self._last_error = "無法同步到封包標記 (超時)"
             else:
-                self._last_error = "無法同步到封包標記"
+                self._last_error = None # No error, just no data
             return None
 
         # After sync, the rest of the line should arrive quickly. Use a short timeout.
         line_timeout = 0.2 if block else 0
         line = self._read_line(ser, block=block, timeout=line_timeout)
         if line is None:
+            # Similar to sync, only report error if we were expecting data.
             if block and line_timeout > 0:
                 self._last_error = "同步後讀取資料超時"
             else:
-                self._last_error = None if not block else "未收到任何資料"
+                self._last_error = None # No error, just incomplete data
             return None
 
         try:
