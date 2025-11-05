@@ -253,6 +253,23 @@ def _print_connection_info(lenient: bool) -> None:
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")
 
 
+def _check_quit_key(stop_event: threading.Event) -> bool:
+    """Check if 'q' key was pressed and set stop event if so.
+    
+    This function must be called regularly to keep the OpenCV window responsive.
+    
+    Args:
+        stop_event: Event to signal shutdown when 'q' is pressed.
+        
+    Returns:
+        True if 'q' was pressed and program should stop, False otherwise.
+    """
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        stop_event.set()
+        return True
+    return False
+
+
 def _main_processing_loop(
     frame_queue: "queue.Queue[tuple[EncodedChunk, FrameStats]]",
     decoder: H264Decoder,
@@ -267,6 +284,9 @@ def _main_processing_loop(
         try:
             chunk, stats = frame_queue.get(timeout=0.2)
         except queue.Empty:
+            # Keep window responsive even when no frames are available
+            if _check_quit_key(stop_event):
+                break
             continue
 
         try:
@@ -277,19 +297,24 @@ def _main_processing_loop(
             frame_queue.task_done()
 
         if not decoded_frames:
+            # Keep window responsive even when decoding produces no frames
+            if _check_quit_key(stop_event):
+                break
             continue
 
         image = decoded_frames[-1]
         if image is None:
             print("錯誤: 無法解碼影像。資料可能已損毀。")
+            # Keep window responsive even when decoding fails
+            if _check_quit_key(stop_event):
+                break
             continue
 
         pending_stats, pending_fragments = display_frame(
             image, pending_stats, pending_fragments, WINDOW_TITLE
         )
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            stop_event.set()
+        if _check_quit_key(stop_event):
             break
 
 
