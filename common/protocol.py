@@ -102,6 +102,10 @@ def decode_frame(frame: bytes) -> Optional[Tuple[int, bytes]]:
     if len(data) != data_length:
         return None
     
+    # Reject empty data (not useful for image transmission)
+    if len(data) == 0:
+        return None
+    
     return frame_type, data
 
 
