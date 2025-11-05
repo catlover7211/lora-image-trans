@@ -9,7 +9,6 @@ import cv2
 ColorMode = Literal["gray", "bgr"]
 VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg", "contour", "yolo"]
 
-
 @dataclass(frozen=True)
 class ImageSettings:
     """影像擷取與編碼相關的預設參數。"""
