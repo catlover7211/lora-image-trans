@@ -92,7 +92,7 @@ void process_byte(uint8_t byte) {
   frame_buffer[frame_buffer_pos++] = byte;
 
   // Once header is complete determine expected length
-  if (frame_buffer_pos == 5 && expected_frame_length == 0) {
+  if (frame_buffer_pos >= 5 && expected_frame_length == 0) {
     size_t payload_length = (static_cast<size_t>(frame_buffer[3]) << 8) | frame_buffer[4];
     if (payload_length == 0 || payload_length > MAX_FRAME_SIZE) {
       Serial.println("\nWARN: Invalid frame length, dropping");
@@ -103,16 +103,29 @@ void process_byte(uint8_t byte) {
     expected_frame_length = payload_length + 9;  // full frame including markers
   }
 
-  if (expected_frame_length > 0 && frame_buffer_pos == expected_frame_length) {
-    bool has_valid_end =
-        frame_buffer[frame_buffer_pos - 2] == FRAME_END[0] &&
-        frame_buffer[frame_buffer_pos - 1] == FRAME_END[1];
+  // Allow extra bytes until we actually see the frame end markers.
+  if (expected_frame_length > 0 && frame_buffer_pos > expected_frame_length + 4) {
+    Serial.println("\nWARN: Frame exceeded expected length, dropping");
+    reset_frame_state();
+    try_resync_with_byte(byte);
+    return;
+  }
 
-    if (has_valid_end) {
-      Serial.write(frame_buffer, frame_buffer_pos);
-      Serial.flush();
+  // Check for frame end markers once we have enough data.
+  if (frame_buffer_pos >= 2 &&
+      frame_buffer[frame_buffer_pos - 2] == FRAME_END[0] &&
+      frame_buffer[frame_buffer_pos - 1] == FRAME_END[1]) {
+    if (frame_buffer_pos < 9) {
+      Serial.println("\nWARN: Frame too short, dropping");
     } else {
-      Serial.println("\nWARN: Frame end mismatch, dropping");
+      size_t reported_length = (static_cast<size_t>(frame_buffer[3]) << 8) | frame_buffer[4];
+      size_t actual_payload = frame_buffer_pos - 9;
+      if (reported_length != actual_payload) {
+        Serial.println("\nWARN: Length mismatch, dropping");
+      } else {
+        Serial.write(frame_buffer, frame_buffer_pos);
+        Serial.flush();
+      }
     }
 
     reset_frame_state();

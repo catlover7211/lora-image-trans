@@ -21,7 +21,7 @@ CS_BLOCK_SIZE = 8
 
 # Buffer settings
 MAX_FRAME_SIZE = 65535  # Maximum 2^16-1 bytes per frame
-CHUNK_SIZE = 500  # Bytes per chunk for LoRa transmission
+CHUNK_SIZE = 240  # Bytes per chunk for LoRa transmission
 
 # Display settings
 WINDOW_TITLE_SENDER = 'CCTV Sender (Press q to quit)'
