@@ -115,6 +115,7 @@ class FrameProtocol:
         self._last_error: Optional[str] = None
         self._pending_ascii: bytearray = bytearray()
         self._lenient = lenient
+        self._synced = False
 
     # -------------------------- Encoding helpers --------------------------
     def build_frame(self, payload: bytes) -> tuple[bytes, FrameStats]:
@@ -169,16 +170,17 @@ class FrameProtocol:
         """Attempt to read and validate a single ASCII framed payload from *ser*."""
         # For blocking calls, use the ACK timeout as the base, otherwise non-blocking.
         sync_timeout = timeout if timeout is not None else (self.ack_timeout if block else 0)
-        
-        synced = self._synchronize(ser, timeout=sync_timeout)
-        if not synced:
-            # In non-blocking mode, failure to sync just means no data is ready.
-            # Only set an error if we were actually blocking and timed out.
-            if block and sync_timeout > 0:
-                self._last_error = "無法同步到封包標記 (超時)"
-            else:
-                self._last_error = None # No error, just no data
-            return None
+
+        if not self._synced:
+            synced = self._synchronize(ser, timeout=sync_timeout)
+            if not synced:
+                # In non-blocking mode, failure to sync just means no data is ready.
+                # Only set an error if we were actually blocking and timed out.
+                if block and sync_timeout > 0:
+                    self._last_error = "無法同步到封包標記 (超時)"
+                else:
+                    self._last_error = None  # No error, just no data
+                return None
 
         # After sync, the rest of the line should arrive quickly. Use a short timeout.
         line_timeout = 0.2 if block else 0
@@ -195,26 +197,31 @@ class FrameProtocol:
             text = line.decode("ascii").rstrip("\r\n")
         except UnicodeDecodeError:
             self._last_error = "資料非 ASCII 編碼"
+            self._resync()
             return None
 
         if not text:
             self._last_error = "收到空白訊息"
+            self._resync()
             return None
 
         parts = text.split(FIELD_SEPARATOR, 3)
         if len(parts) != 4:
             self._last_error = "欄位數不正確"
+            self._resync()
             return None
 
         prefix, length_str, crc_str, encoded = parts
         if prefix != FRAME_PREFIX:
             self._last_error = "開頭標記錯誤"
+            self._resync()
             return None
 
         try:
             encoded_length = int(length_str)
         except ValueError:
             self._last_error = "長度欄位不是整數"
+            self._resync()
             return None
 
         if encoded_length > len(encoded):
@@ -236,6 +243,7 @@ class FrameProtocol:
             self._last_error = msg
             # 當長度不符時，我們假設整個封包都已損毀，因此不將其放回緩衝區
             # 而是直接丟棄，等待下一個有效的 FRAME 開頭
+            self._resync()
             return None
         
         # 如果宣告長度與實際長度不同，但在寬鬆模式下，我們信任宣告的長度
@@ -247,79 +255,95 @@ class FrameProtocol:
 
         if encoded_length > self.max_encoded_size:
             self._last_error = "編碼資料超過上限"
+            self._resync()
             return None
 
         try:
             expected_crc = int(crc_str, 16)
         except ValueError:
             self._last_error = "CRC 欄位格式錯誤"
+            self._resync()
             return None
 
         try:
             payload = base64.b64decode(encoded.encode("ascii"), validate=True)
         except Exception:
             self._last_error = "Base64 解碼失敗"
+            self._resync()
             return None
 
         actual_crc = zlib.crc32(payload) & 0xFFFFFFFF
         if actual_crc != expected_crc:
             self._last_error = f"CRC 校驗失敗 (預期 {expected_crc:08x}, 實際 {actual_crc:08x})"
+            self._resync()
             return None
 
         stats = FrameStats(
             payload_size=len(payload), stuffed_size=len(encoded), crc=expected_crc
         )
+        self._resync()
         return Frame(payload=payload, stats=stats)
+
+    def _read_serial_chunk(self, ser: SerialLike, *, wait: bool) -> bytes:
+        """Read a small chunk from the serial port respecting blocking preference."""
+        max_bytes = self.chunk_size
+        available = 0
+        try:
+            available = int(getattr(ser, "in_waiting", 0))
+        except (AttributeError, TypeError, ValueError):
+            available = 0
+
+        if not wait and available <= 0:
+            return b""
+
+        if available > 0:
+            max_bytes = max(1, min(max_bytes, available))
+
+        try:
+            return ser.read(max_bytes)
+        except Exception:
+            return b""
+
+    def _resync(self, *, clear_pending: bool = False) -> None:
+        """Reset sync state so the next frame search starts from a clean boundary."""
+        self._synced = False
+        if clear_pending:
+            self._pending_ascii.clear()
 
     def _synchronize(self, ser: SerialLike, timeout: Optional[float] = None) -> bool:
         """Search for the sync marker in the input buffer with a timeout."""
-        marker_len = len(SYNC_MARKER)
-        search_buffer = bytearray()
-        start_time = time.monotonic()
+        if self._synced:
+            return True
 
-        if self._pending_ascii:
-            search_buffer.extend(self._pending_ascii)
-            self._pending_ascii.clear()
+        marker_len = len(SYNC_MARKER)
+        buffer = bytearray(self._pending_ascii)
+        self._pending_ascii.clear()
+        start_time = time.monotonic()
+        wait_for_data = timeout is None or timeout > 0
 
         while True:
-            if timeout is not None and (time.monotonic() - start_time) > timeout:
-                self._pending_ascii.extend(search_buffer) # Keep unprocessed data
-                return False
-
-            idx = search_buffer.find(SYNC_MARKER)
+            idx = buffer.find(SYNC_MARKER)
             if idx != -1:
-                self._pending_ascii.extend(search_buffer[idx + marker_len:])
+                del buffer[:idx + marker_len]
+                self._pending_ascii.extend(buffer)
+                self._synced = True
                 return True
 
-            # Determine how many bytes to read
-            # Set a non-blocking read if timeout is 0
-            original_timeout = getattr(ser, 'timeout', None)
-            read_timeout = 0 if timeout == 0 else 0.01 # Short poll
-            if getattr(ser, 'timeout', -1) != read_timeout:
-                try:
-                    ser.timeout = read_timeout
-                except AttributeError:
-                    pass # Not all serial-like objects have a timeout setter
+            if timeout is not None and (time.monotonic() - start_time) > timeout:
+                self._pending_ascii[:0] = buffer
+                return False
 
-            new_data = ser.read(self.chunk_size)
-            
-            # Restore original timeout if we changed it
-            if original_timeout is not None and getattr(ser, 'timeout', -1) != original_timeout:
-                 try:
-                    ser.timeout = original_timeout
-                 except AttributeError:
-                    pass
-
-            if not new_data:
-                if timeout == 0: # Non-blocking, no data is not an error
-                    self._pending_ascii.extend(search_buffer)
+            chunk = self._read_serial_chunk(ser, wait=wait_for_data)
+            if not chunk:
+                if not wait_for_data:
+                    self._pending_ascii[:0] = buffer
                     return False
-                continue # Poll again
+                time.sleep(0.001)
+                continue
 
-            search_buffer.extend(new_data)
-
-            if len(search_buffer) > self.max_encoded_size * 2:
-                search_buffer = search_buffer[-marker_len:]
+            buffer.extend(chunk)
+            if len(buffer) > self.max_encoded_size * 2:
+                buffer = buffer[-(self.max_encoded_size * 2):]
 
     def _wait_for_ack(self, ser: SerialLike) -> bool:
         """Wait for an ACK message from the remote."""
@@ -341,47 +365,29 @@ class FrameProtocol:
             time.sleep(0.001)
 
     def _read_line(self, ser: SerialLike, *, block: bool = True, timeout: Optional[float] = None) -> Optional[bytes]:
-        """
-        Read from the serial port until a line terminator is found or timeout.
-        Handles a persistent buffer (_pending_ascii).
-        """
+        """Read the next newline-terminated ASCII frame payload."""
         start_time = time.monotonic()
-        
+
         while True:
-            # Check for timeout
-            if timeout is not None and (time.monotonic() - start_time) > timeout:
-                return None # Timeout occurred
+            newline_index = self._pending_ascii.find(b"\n")
+            if newline_index != -1:
+                line = bytes(self._pending_ascii[:newline_index + 1])
+                del self._pending_ascii[:newline_index + 1]
+                return line
 
-            # Check for line terminator in the existing buffer
-            if b'\n' in self._pending_ascii:
-                line, self._pending_ascii = self._pending_ascii.split(b'\n', 1)
-                return line + b'\n'
-
-            # If non-blocking and no full line, return immediately
             if not block:
+                chunk = self._read_serial_chunk(ser, wait=False)
+                if chunk:
+                    self._pending_ascii.extend(chunk)
+                    continue
                 return None
 
-            # Read more data from serial
-            # Set a non-blocking read if timeout is 0
-            original_timeout = getattr(ser, 'timeout', None)
-            read_timeout = 0 if timeout == 0 else 0.01 # Short poll
-            if getattr(ser, 'timeout', -1) != read_timeout:
-                try:
-                    ser.timeout = read_timeout
-                except AttributeError:
-                    pass
-
-            new_data = ser.read(self.chunk_size)
-
-            # Restore original timeout
-            if original_timeout is not None and getattr(ser, 'timeout', -1) != original_timeout:
-                 try:
-                    ser.timeout = original_timeout
-                 except AttributeError:
-                    pass
-
-            if new_data:
-                self._pending_ascii.extend(new_data)
-            elif timeout is None:
-                # In true blocking mode (timeout=None), no data might mean closed port
+            if timeout is not None and (time.monotonic() - start_time) > timeout:
                 return None
+
+            chunk = self._read_serial_chunk(ser, wait=True)
+            if chunk:
+                self._pending_ascii.extend(chunk)
+                continue
+
+            time.sleep(0.001)
