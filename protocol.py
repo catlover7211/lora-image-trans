@@ -184,7 +184,10 @@ class FrameProtocol:
 
     def _set_error_if_blocking(self, error_msg: str, block: bool, timeout: float) -> None:
         """Set error message only if blocking with timeout, otherwise clear it."""
-        self._last_error = error_msg if (block and timeout > 0) else None
+        if block and timeout > 0:
+            self._last_error = error_msg
+        else:
+            self._last_error = None
 
     def _parse_and_validate_frame(self, line: bytes) -> Optional[Frame]:
         """Parse and validate a frame line, returning Frame or None on error."""
