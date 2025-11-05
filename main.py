@@ -139,6 +139,9 @@ def display_frame(
     cv2.imshow(window_title, image)
     
     return [], 0  # Clear pending stats and fragments
+
+
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Receive CCTV frames over serial and display them.')
     ack_group = parser.add_mutually_exclusive_group()
     ack_group.add_argument('--ack', action='store_true', help='強制啟用 chunk 級 ACK。需與傳送端一致。')
