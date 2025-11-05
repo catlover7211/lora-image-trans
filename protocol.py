@@ -18,7 +18,7 @@ BAUD_RATE = 115_200
 FRAME_PREFIX = "FRAME"
 FIELD_SEPARATOR = " "
 LINE_TERMINATOR = "\n"
-DEFAULT_CHUNK_SIZE = 500
+DEFAULT_CHUNK_SIZE = 220
 DEFAULT_INTER_CHUNK_DELAY = 0  # seconds
 DEFAULT_MAX_PAYLOAD_SIZE = 1920 * 1080  # 128 KB (raw payload)
 ACK_MESSAGE = b"ACK\n"
@@ -196,17 +196,24 @@ class FrameProtocol:
             self._last_error = "長度欄位不是整數"
             return None
 
-        if encoded_length != len(encoded):
-            if encoded_length < len(encoded):
-                overflow = encoded[encoded_length:]
-                encoded = encoded[:encoded_length]
-                self._pending_ascii[:0] = overflow.encode("ascii")
+        if encoded_length > len(encoded):
+            # 資料不足，可能被截斷。將其放回緩衝區等待更多資料。
+            self._pending_ascii[:0] = text.encode("ascii")
+            self._last_error = "資料不足，等待更多數據"
+            return None
+
+        if encoded_length < len(encoded):
+            # 資料過多，分割並將多餘部分放回緩衝區
+            overflow = encoded[encoded_length:]
+            encoded = encoded[:encoded_length]
+            self._pending_ascii[:0] = overflow.encode("ascii")
+            self._last_error = f"資料溢出，宣告 {encoded_length} 實際 {len(encoded)} (已處理)"
+        
+        # 在嚴格模式下，長度必須完全相符
+        if not self._lenient and encoded_length != len(encoded):
             msg = f"長度不符，宣告 {encoded_length} 實際 {len(encoded)}"
-            if not self._lenient:
-                self._last_error = msg
-                return None
-            self._last_error = msg + " (lenient: 繼續嘗試解碼)"
-            encoded_length = len(encoded)
+            self._last_error = msg
+            return None
 
         if encoded_length > self.max_encoded_size:
             self._last_error = "編碼資料超過上限"
