@@ -64,7 +64,7 @@ FRAME <length> <crc> <base64_data>\n
 ```
 
 - **FRAME**: 幀前綴標記
-- **length**: base64 編碼後的資料長度
+- **length**: base64 編碼字串的字符長度（十進位）
 - **crc**: CRC32 校驗碼（十六進位）
 - **base64_data**: Base64 編碼的 payload
 - **\n**: 行結束符

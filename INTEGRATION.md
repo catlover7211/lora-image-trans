@@ -62,11 +62,11 @@ FRAME 320 a3f5c2d1 SGVsbG8gV29ybGQhIFRoaXMgaXMgYSB0ZXN0IG1lc3NhZ2UuCg==\n
 **實作位置**: `h264_codec.py`
 
 根據 codec 類型，data 欄位包含：
-- **H.264/H.265/AV1**: NAL units (Network Abstraction Layer units)
-- **JPEG**: JPEG 檔案資料
-- **Wavelet**: 自訂壓縮資料
-- **Contour**: 傅立葉係數
-- **YOLO**: 邊界框資料
+- **H.264/H.265/AV1**: NAL units (見 `h264_codec.py` 的 `H264Encoder`/`H264Decoder`)
+- **JPEG**: JPEG 檔案資料 (見 `h264_codec.py` 的 `JPEGEncoder`)
+- **Wavelet**: 自訂壓縮資料 (見 `h264_codec.py` 的 `WaveletEncoder`/`WaveletDecoder`)
+- **Contour**: 傅立葉係數 (見 `h264_codec.py` 的 `ContourEncoder`/`ContourDecoder`)
+- **YOLO**: 邊界框資料 (見 `h264_codec.py` 的 `DetectionEncoder`/`DetectionDecoder`)
 
 ## Arduino/ESP32 韌體角色
 

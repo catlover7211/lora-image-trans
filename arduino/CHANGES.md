@@ -15,7 +15,7 @@ FRAME <length> <crc> <base64_data>\n
 ```
 
 **重要發現：**
-- **沒有獨立的 SYNC_MARKER**：幀格式本身已包含同步機制
+- **沒有獨立的 SYNC_MARKER 常數**：FRAME 前綴本身作為同步標記
 - `FRAME_PREFIX` = "FRAME"
 - `FIELD_SEPARATOR` = " " (空格)
 - `LINE_TERMINATOR` = "\n" (換行符)
