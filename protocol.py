@@ -165,15 +165,22 @@ class FrameProtocol:
         return self._last_error
 
     # -------------------------- Decoding helpers --------------------------
-    def receive_frame(self, ser: SerialLike, *, block: bool = True) -> Optional[Frame]:
+    def receive_frame(self, ser: SerialLike, *, block: bool = True, timeout: Optional[float] = None) -> Optional[Frame]:
         """Attempt to read and validate a single ASCII framed payload from *ser*."""
-        if not self._synchronize(ser):
+        sync_timeout = timeout if timeout is not None else (self.ack_timeout if block else 0)
+        if not self._synchronize(ser, timeout=sync_timeout):
             self._last_error = "無法同步到封包標記"
             return None
 
-        line = self._read_line(ser, block=block)
+        # 讀取封包剩餘內容的超時應較短，因為大部分時間花在等待標記上
+        line_timeout = timeout if timeout is not None else (0.1 if block else 0)
+        line = self._read_line(ser, block=block, timeout=line_timeout)
         if line is None:
-            self._last_error = None if not block else "未收到任何資料"
+            # 如果是因超時而失敗，則不顯示 "未收到資料"
+            if not block or (line_timeout and line_timeout > 0):
+                 self._last_error = "同步後讀取資料超時"
+            else:
+                self._last_error = None
             return None
 
         try:
