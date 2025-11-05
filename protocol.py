@@ -213,7 +213,16 @@ class FrameProtocol:
         if not self._lenient and encoded_length != len(encoded):
             msg = f"長度不符，宣告 {encoded_length} 實際 {len(encoded)}"
             self._last_error = msg
+            # 當長度不符時，我們假設整個封包都已損毀，因此不將其放回緩衝區
+            # 而是直接丟棄，等待下一個有效的 FRAME 開頭
             return None
+        
+        # 如果宣告長度與實際長度不同，但在寬鬆模式下，我們信任宣告的長度
+        if encoded_length != len(encoded):
+            encoded = encoded[:encoded_length]
+            self._last_error = f"長度不符，宣告 {encoded_length} 實際 {len(encoded)} (已修正)"
+        else:
+            self._last_error = None # 清除舊的長度錯誤訊息
 
         if encoded_length > self.max_encoded_size:
             self._last_error = "編碼資料超過上限"
