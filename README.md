@@ -69,6 +69,28 @@ python -m unittest tests/test_protocol.py
 - 若系統未安裝 libx265 / libaom-av1 或裝置效能不足，可在啟動發送端時加入 `--codec h264` 改回 H.264 以維持相容性。
 - 協定採用 ASCII 框架與 CRC32 校驗，並支援逐段 ACK（初始階段可自動降級為無 ACK 模式，以防止接收端尚未就緒時阻塞）。
 
+## ESP32 韌體優化說明
+
+本專案的 ESP32 韌體（`esp32_firmware/esp32_firmware.ino`）已針對穩定性與效能進行優化：
+
+### 記憶體管理改善
+- 使用固定大小的 `uint8_t` 陣列取代 Arduino `String` 類別，避免記憶體碎片化問題
+- USB 緩衝區設定為 4096 bytes，LoRa 緩衝區設定為 512 bytes，適合大多數應用場景
+
+### 錯誤處理機制
+- 加入緩衝區溢出檢查，超過限制時自動重置並重新同步
+- 異常情況下會輸出錯誤訊息，方便除錯
+
+### 效能優化
+- LoRa 資料採用批次讀取（最多 512 bytes），減少 `Serial.write()` 呼叫次數
+- 使用 `delayMicroseconds(500)` 取代 `delay(1)`，降低迴圈延遲至 0.5ms
+- 動態調整序列埠讀取大小，提升大型封包的傳輸效率
+
+### 與 Python 端的整合
+- ESP32 韌體完全透明轉發封包（包含同步標記 `\xDE\xAD\xBE\xEF`）
+- Python 端的 `protocol.py` 在 `build_frame()` 中已加入同步標記，ESP32 無需額外處理
+- 接收端的 `_synchronize()` 方法會自動搜尋同步標記，確保可靠的幀邊界偵測
+
 ## 程式流程圖
 ```mermaid
 flowchart TD

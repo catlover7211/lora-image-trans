@@ -171,9 +171,14 @@ def display_frame(
     total_ascii = sum(stat.stuffed_size for stat in pending_stats)
     fragment_count = pending_fragments
     
+    # Calculate compression ratio
+    compression_ratio = (total_ascii / total_payload * 100) if total_payload > 0 else 0
+    
     print(
-        f"封包大小: {total_payload} bytes, "
-        f"ASCII 編碼大小: {total_ascii} bytes, 分片數: {fragment_count}"
+        f"封包: {total_payload} bytes, "
+        f"編碼後: {total_ascii} bytes "
+        f"(膨脹率: {compression_ratio:.1f}%), "
+        f"分片: {fragment_count}"
     )
     
     cv2.imshow(window_title, image)

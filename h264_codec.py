@@ -129,57 +129,66 @@ class EncodedChunk:
 
     @classmethod
     def from_payload(cls, payload: bytes) -> "EncodedChunk":
+        """Deserialize chunk from protocol payload.
+        
+        Supports both legacy (1-byte flags) and new (2-byte flags) formats for
+        backward compatibility. The new format is required for codecs with flag
+        values >= 0x100 (e.g., CS codec with FLAG_CODEC_CS = 0x100).
+        
+        Format detection:
+        - If payload length < 2: treat as legacy format (1-byte flags)
+        - If 2nd byte (high byte of 2-byte flags) is non-zero: new format
+        - Otherwise: legacy format (1-byte flags)
+        
+        Args:
+            payload: Raw bytes from protocol frame
+            
+        Returns:
+            EncodedChunk instance
+            
+        Raises:
+            ValueError: If payload is empty
+        """
         if not payload:
             raise ValueError("payload 不可為空")
         
-        # Try to detect format by checking if we can decode as 2-byte flags
-        # Legacy format uses single byte (0x00-0xFF) followed by data
-        # New format uses 2 bytes in little-endian
+        # Detect format: new format if length >= 2 AND high byte is set
         if len(payload) >= 2:
-            # Try reading as 2-byte flags first
+            # Read as 2-byte little-endian
             flags_2byte = struct.unpack("<H", payload[:2])[0]
-            
-            # Check if this could be a valid CS codec (FLAG_CODEC_CS = 0x100)
-            # or if high byte is set for any new codec
+            # Check if high byte is set (indicates new format or CS codec)
             if flags_2byte & 0xFF00:
-                # This is definitely new format (high byte is set)
+                # New format with 2-byte flags
                 flags = flags_2byte
                 data = payload[2:]
             else:
-                # High byte is 0, could be either format
-                # Check if low byte matches known legacy flags
-                flags_1byte = payload[0]
-                if flags_1byte & (cls.FLAG_CODEC_HEVC | cls.FLAG_CODEC_AV1 | 
-                                 cls.FLAG_CODEC_WAVELET | cls.FLAG_CODEC_JPEG |
-                                 cls.FLAG_CODEC_CONTOUR | cls.FLAG_CODEC_YOLO):
-                    # Looks like legacy format
-                    flags = flags_1byte
-                    data = payload[1:]
-                else:
-                    # Use new format
-                    flags = flags_2byte
-                    data = payload[2:]
+                # Legacy format with 1-byte flags
+                flags = payload[0]
+                data = payload[1:]
         else:
-            # Single byte payload, must be legacy
+            # Single byte payload - legacy format
             flags = payload[0]
             data = payload[1:]
         
+        # Determine codec from flags
+        # Priority order: CS > YOLO > CONTOUR > JPEG > WAVELET > AV1 > HEVC > H264
         if flags & cls.FLAG_CODEC_CS:
             codec: VideoCodec = "cs"
-        elif flags & cls.FLAG_CODEC_WAVELET:
-            codec = "wavelet"
+        elif flags & cls.FLAG_CODEC_YOLO:
+            codec = "yolo"
         elif flags & cls.FLAG_CODEC_CONTOUR:
             codec = "contour"
         elif flags & cls.FLAG_CODEC_JPEG:
             codec = "jpeg"
-        elif flags & cls.FLAG_CODEC_YOLO:
-            codec = "yolo"
+        elif flags & cls.FLAG_CODEC_WAVELET:
+            codec = "wavelet"
         elif flags & cls.FLAG_CODEC_AV1:
             codec = "av1"
         elif flags & cls.FLAG_CODEC_HEVC:
             codec = "h265"
         else:
             codec = "h264"
+        
         return cls(
             data=data,
             codec=codec,

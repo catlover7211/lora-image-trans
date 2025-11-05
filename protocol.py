@@ -155,25 +155,45 @@ class FrameProtocol:
 
     # -------------------------- Encoding helpers --------------------------
     def build_frame(self, payload: bytes) -> tuple[bytes, FrameStats]:
-        """Construct the ASCII framed byte stream and statistics for *payload*."""
+        """Construct the ASCII framed byte stream and statistics for *payload*.
+        
+        Frame format (compatible with ESP32 transparent transmission):
+        1. SYNC_MARKER (4 bytes): \\xDE\\xAD\\xBE\\xEF - binary sync marker
+        2. Header: "FRAME <length> <crc32_hex>"
+        3. Payload: base64-encoded binary data
+        4. LINE_TERMINATOR: "\\n"
+        
+        The ESP32 firmware forwards the entire frame (including SYNC_MARKER)
+        to LoRa without modification, ensuring reliable frame boundary detection
+        even with lossy transmission.
+        """
         encoded = base64.b64encode(payload).decode("ascii")
         crc = zlib.crc32(payload) & 0xFFFFFFFF
         header = FIELD_SEPARATOR.join(
             (FRAME_PREFIX, str(len(encoded)), f"{crc:08x}")
         )
         frame_str = header + FIELD_SEPARATOR + encoded + LINE_TERMINATOR
-        # 在整個封包前加上同步標記
+        # 在整個封包前加上同步標記（ESP32 會原封不動轉發）
         frame_bytes = SYNC_MARKER + frame_str.encode("ascii")
         stats = FrameStats(payload_size=len(payload), stuffed_size=len(encoded), crc=crc)
         return frame_bytes, stats
 
     def iter_chunks(self, frame: bytes) -> Iterable[bytes]:
-        """Split a frame into chunks suitable for streaming over the serial port."""
+        """Split a frame into chunks suitable for streaming over the serial port.
+        
+        Chunking prevents overwhelming the ESP32 USB serial buffer and allows
+        for controlled transmission rates when inter_chunk_delay is set.
+        """
         for index in range(0, len(frame), self.chunk_size):
             yield frame[index:index + self.chunk_size]
 
     def send_frame(self, ser: SerialLike, payload: bytes) -> FrameStats:
-        """Send *payload* through the provided serial connection."""
+        """Send *payload* through the provided serial connection.
+        
+        The payload is encoded, chunked, and sent with optional inter-chunk
+        delays. The ESP32 firmware accumulates chunks until it receives a
+        newline, then forwards the complete frame to LoRa.
+        """
         frame_bytes, stats = self.build_frame(payload)
         for chunk in self.iter_chunks(frame_bytes):
             ser.write(chunk)
@@ -331,7 +351,15 @@ class FrameProtocol:
         return encoded
 
     def _read_serial_chunk(self, ser: SerialLike, *, wait: bool) -> bytes:
-        """Read a small chunk from the serial port respecting blocking preference."""
+        """Read a small chunk from the serial port respecting blocking preference.
+        
+        Optimized to read larger chunks when data is available to reduce
+        system call overhead and improve throughput. Maximum read size is
+        capped to prevent memory issues.
+        """
+        # Maximum read size to prevent excessive memory allocation
+        MAX_READ_SIZE = 8192  # 8KB hard limit
+        
         max_bytes = self.chunk_size
         available = 0
         try:
@@ -343,7 +371,9 @@ class FrameProtocol:
             return b""
 
         if available > 0:
-            max_bytes = max(1, min(max_bytes, available))
+            # Read up to double the chunk size when more data is available,
+            # but never exceed MAX_READ_SIZE
+            max_bytes = max(1, min(self.chunk_size * 2, available, MAX_READ_SIZE))
 
         try:
             return ser.read(max_bytes)
@@ -357,7 +387,11 @@ class FrameProtocol:
             self._pending_ascii.clear()
 
     def _synchronize(self, ser: SerialLike, timeout: Optional[float] = None) -> bool:
-        """Search for the sync marker in the input buffer with a timeout."""
+        """Search for the sync marker in the input buffer with a timeout.
+        
+        Optimized to handle large buffers more efficiently and reduce
+        memory allocations during synchronization.
+        """
         if self._synced:
             return True
 
@@ -366,6 +400,9 @@ class FrameProtocol:
         self._pending_ascii.clear()
         start_time = time.monotonic()
         wait_for_data = timeout is None or timeout > 0
+        
+        # Maximum buffer size before trimming (2x encoded size for safety)
+        max_buffer_size = self.max_encoded_size * 2
 
         while True:
             # Check for sync marker in current buffer
@@ -387,9 +424,13 @@ class FrameProtocol:
                 continue
 
             buffer.extend(chunk)
+            
             # Prevent buffer from growing too large
-            if len(buffer) > self.max_encoded_size * 2:
-                buffer = buffer[-(self.max_encoded_size * 2):]
+            # Only trim when significantly over limit to reduce operations
+            if len(buffer) > max_buffer_size + self.chunk_size:
+                # Keep most recent data, discarding older data that didn't contain sync marker
+                excess = len(buffer) - max_buffer_size
+                del buffer[:excess]
 
     def _try_find_sync_marker(self, buffer: bytearray, marker_len: int) -> bool:
         """Try to find sync marker in buffer, updating state if found."""
