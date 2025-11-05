@@ -4,17 +4,20 @@ This application captures images from camera, encodes them using JPEG or
 Compressed Sensing (CS), and transmits via serial port to ESP32.
 """
 import argparse
+import sys
 import time
-from typing import Optional
+from pathlib import Path
 
 import cv2
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from camera_capture import CameraCapture
 from jpeg_encoder import JPEGEncoder
 from cs_encoder import CSEncoder
 from serial_comm import SerialComm
-import sys
-sys.path.insert(0, '..')
 from common.protocol import encode_frame, TYPE_JPEG, TYPE_CS
 from common.config import (
     DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_JPEG_QUALITY,
