@@ -28,6 +28,12 @@ MAX_PAYLOAD_SIZE = 1920 * 1080
 WINDOW_TITLE = 'Received CCTV (Press q to quit)'
 """Window title for the display window."""
 
+WAITING_WINDOW_WIDTH = 640
+"""Width of the waiting window in pixels."""
+
+WAITING_WINDOW_HEIGHT = 480
+"""Height of the waiting window in pixels."""
+
 DEFAULT_RX_BUFFER = DEFAULT_IMAGE_SETTINGS.rx_buffer_size
 """Default receive buffer size in frames."""
 
@@ -261,7 +267,7 @@ def _create_waiting_window(window_title: str) -> None:
     and can quit with 'q' key even before receiving the first frame.
     """
     # Create a simple black image with text
-    waiting_image = np.zeros((480, 640, 3), dtype=np.uint8)
+    waiting_image = np.zeros((WAITING_WINDOW_HEIGHT, WAITING_WINDOW_WIDTH, 3), dtype=np.uint8)
     
     # Add "Waiting for frames..." text in the center
     text = "Waiting for frames..."
