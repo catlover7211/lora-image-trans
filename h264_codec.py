@@ -156,6 +156,7 @@ class EncodedChunk:
 
 
 MIN_ENCODER_BITRATE = 10_000
+MAX_SEED_VALUE = 2**32  # Maximum value for random seed in compressed sensing
 
 
 class H264Encoder(BaseEncoder):
@@ -208,7 +209,13 @@ class H264Encoder(BaseEncoder):
         
         try:
             codec_ctx: Any = av.CodecContext.create(encoder_name, "w")
-        except Exception:
+        except Exception as e:
+            # Fallback to alternative encoder if preferred one fails
+            import warnings
+            warnings.warn(
+                f"Failed to create {encoder_name} encoder: {e}. Falling back to {fallback_name}.",
+                RuntimeWarning
+            )
             codec_ctx = av.CodecContext.create(fallback_name, "w")
 
         frame_rate = max(int(round(fps)), 1)
@@ -792,7 +799,7 @@ class CSEncoder(BaseEncoder):
             raise ValueError("測量比率必須介於 0 和 1 之間")
 
         self.measurement_ratio = measurement_ratio
-        self.seed = seed % (2**32) if seed is not None else np.random.randint(0, 2**32 - 1)
+        self.seed = seed % MAX_SEED_VALUE if seed is not None else np.random.randint(0, MAX_SEED_VALUE - 1)
 
         signal_length = width * height
         self.num_measurements = max(1, int(signal_length * measurement_ratio))
@@ -800,7 +807,9 @@ class CSEncoder(BaseEncoder):
         # Create measurement matrix
         rng = np.random.RandomState(self.seed)
         self.measurement_matrix = rng.randn(self.num_measurements, signal_length).astype(np.float32)
-        self.measurement_matrix /= np.linalg.norm(self.measurement_matrix, axis=1, keepdims=True)
+        # Normalize rows, adding epsilon to prevent division by zero
+        row_norms = np.linalg.norm(self.measurement_matrix, axis=1, keepdims=True)
+        self.measurement_matrix /= (row_norms + 1e-8)
 
     @staticmethod
     def _dct2(block: np.ndarray) -> np.ndarray:
@@ -936,7 +945,9 @@ class CSDecoder:
         """Create measurement matrix from seed."""
         rng = np.random.RandomState(seed)
         measurement_matrix = rng.randn(num_measurements, signal_length).astype(np.float32)
-        measurement_matrix /= np.linalg.norm(measurement_matrix, axis=1, keepdims=True)
+        # Normalize rows, adding epsilon to prevent division by zero
+        row_norms = np.linalg.norm(measurement_matrix, axis=1, keepdims=True)
+        measurement_matrix /= (row_norms + 1e-8)
         return measurement_matrix
 
     def _reconstruct_legacy(
