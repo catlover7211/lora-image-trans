@@ -13,7 +13,7 @@ import numpy as np
 from av.packet import Packet
 from av.video.frame import PictureType
 
-VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg", "contour", "yolo"]
+VideoCodec = Literal["h264", "h265", "av1", "wavelet", "jpeg", "contour", "yolo", "cs"]
 
 DetectionBox = Tuple[float, float, float, float, float]
 
@@ -35,6 +35,7 @@ class EncodedChunk:
     FLAG_CODEC_JPEG = 0x20
     FLAG_CODEC_CONTOUR = 0x40
     FLAG_CODEC_YOLO = 0x80
+    FLAG_CODEC_CS = 0x100
 
     def to_payload(self) -> bytes:
         """Convert the chunk into a protocol payload with a flag prefix."""
@@ -55,16 +56,52 @@ class EncodedChunk:
             flags |= self.FLAG_CODEC_CONTOUR
         elif self.codec == "yolo":
             flags |= self.FLAG_CODEC_YOLO
-        return bytes((flags,)) + self.data
+        elif self.codec == "cs":
+            flags |= self.FLAG_CODEC_CS
+        # Use 2 bytes for flags to support extended codec types
+        return struct.pack("<H", flags) + self.data
 
     @classmethod
     def from_payload(cls, payload: bytes) -> "EncodedChunk":
         if not payload:
             raise ValueError("payload 不可為空")
-        flags = payload[0]
-        data = payload[1:]
-        if flags & cls.FLAG_CODEC_WAVELET:
-            codec: VideoCodec = "wavelet"
+        
+        # Try to detect format by checking if we can decode as 2-byte flags
+        # Legacy format uses single byte (0x00-0xFF) followed by data
+        # New format uses 2 bytes in little-endian
+        if len(payload) >= 2:
+            # Try reading as 2-byte flags first
+            flags_2byte = struct.unpack("<H", payload[:2])[0]
+            
+            # Check if this could be a valid CS codec (FLAG_CODEC_CS = 0x100)
+            # or if high byte is set for any new codec
+            if flags_2byte & 0xFF00:
+                # This is definitely new format (high byte is set)
+                flags = flags_2byte
+                data = payload[2:]
+            else:
+                # High byte is 0, could be either format
+                # Check if low byte matches known legacy flags
+                flags_1byte = payload[0]
+                if flags_1byte & (cls.FLAG_CODEC_HEVC | cls.FLAG_CODEC_AV1 | 
+                                 cls.FLAG_CODEC_WAVELET | cls.FLAG_CODEC_JPEG |
+                                 cls.FLAG_CODEC_CONTOUR | cls.FLAG_CODEC_YOLO):
+                    # Looks like legacy format
+                    flags = flags_1byte
+                    data = payload[1:]
+                else:
+                    # Use new format
+                    flags = flags_2byte
+                    data = payload[2:]
+        else:
+            # Single byte payload, must be legacy
+            flags = payload[0]
+            data = payload[1:]
+        
+        if flags & cls.FLAG_CODEC_CS:
+            codec: VideoCodec = "cs"
+        elif flags & cls.FLAG_CODEC_WAVELET:
+            codec = "wavelet"
         elif flags & cls.FLAG_CODEC_CONTOUR:
             codec = "contour"
         elif flags & cls.FLAG_CODEC_JPEG:
@@ -687,6 +724,227 @@ class WaveletDecoder:
         return []
 
 
+class CSEncoder:
+    """Compressed Sensing encoder using random Gaussian measurement matrix with DCT sparsifying basis."""
+
+    VERSION = 1
+    HEADER_STRUCT = struct.Struct("<BHHHHH")  # version, width, height, measurements, seed_high, seed_low
+
+    def __init__(
+        self, 
+        width: int, 
+        height: int, 
+        *, 
+        measurement_ratio: float = 0.3,
+        seed: Optional[int] = None
+    ) -> None:
+        """
+        Initialize CS encoder.
+        
+        Args:
+            width: Image width
+            height: Image height
+            measurement_ratio: Ratio of measurements to original signal size (0 < ratio < 1)
+            seed: Random seed for measurement matrix generation (for reproducibility)
+        """
+        if width <= 0 or height <= 0:
+            raise ValueError("影像尺寸必須為正整數")
+        if not (0 < measurement_ratio < 1):
+            raise ValueError("測量比率必須介於 0 和 1 之間")
+        
+        self.width = width
+        self.height = height
+        self.measurement_ratio = measurement_ratio
+        
+        # Use provided seed or generate a random one
+        if seed is None:
+            self.seed = np.random.randint(0, 2**32 - 1)
+        else:
+            self.seed = seed % (2**32)
+        
+        # Calculate number of measurements per channel
+        signal_length = width * height
+        self.num_measurements = max(1, int(signal_length * measurement_ratio))
+        
+        # Generate measurement matrix (will be regenerated with same seed for decoding)
+        rng = np.random.RandomState(self.seed)
+        self.measurement_matrix = rng.randn(self.num_measurements, signal_length).astype(np.float32)
+        # Normalize rows
+        row_norms = np.linalg.norm(self.measurement_matrix, axis=1, keepdims=True)
+        self.measurement_matrix /= (row_norms + 1e-8)
+
+    def encode(self, frame_bgr: np.ndarray) -> List[EncodedChunk]:
+        """Encode a BGR frame using compressed sensing."""
+        if frame_bgr.shape[0] != self.height or frame_bgr.shape[1] != self.width:
+            raise ValueError("輸入影像尺寸與編碼器不符")
+        if frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3:
+            raise ValueError("輸入影像需為 BGR 三通道格式")
+
+        # Process each channel separately
+        measurements_list = []
+        for c in range(3):
+            channel = frame_bgr[:, :, c].astype(np.float32)
+            # Flatten channel
+            signal = channel.flatten()
+            # Apply measurement matrix: y = Φx
+            measurements = self.measurement_matrix @ signal
+            measurements_list.append(measurements)
+
+        # Stack measurements for all channels
+        all_measurements = np.stack(measurements_list, axis=0)  # Shape: (3, num_measurements)
+        
+        # Quantize to int16 for compression
+        quantized = np.clip(all_measurements, -32768, 32767).astype(np.int16)
+        
+        # Compress the measurements
+        payload_body = zlib.compress(quantized.tobytes(), level=6)
+        
+        # Pack header: version, width, height, num_measurements, seed (split into 2 uint16)
+        seed_high = (self.seed >> 16) & 0xFFFF
+        seed_low = self.seed & 0xFFFF
+        header = self.HEADER_STRUCT.pack(
+            self.VERSION,
+            self.width,
+            self.height,
+            self.num_measurements,
+            seed_high,
+            seed_low,
+        )
+        
+        chunk = EncodedChunk(
+            data=header + payload_body,
+            codec="cs",
+            is_keyframe=True,
+            is_config=False,
+        )
+        return [chunk]
+
+    def force_keyframe(self) -> None:
+        # All frames are intra-only; nothing to do.
+        return
+
+    def force_config_repeat(self, count: int = 3) -> None:
+        # CS 編碼為每幀獨立，不需要額外的設定封包。
+        return
+
+
+class CSDecoder:
+    """Compressed Sensing decoder using regularized least-squares reconstruction."""
+
+    HEADER_STRUCT = CSEncoder.HEADER_STRUCT
+
+    def __init__(self, regularization: float = 0.01):
+        """
+        Initialize CS decoder.
+        
+        Args:
+            regularization: Regularization parameter for least-squares (ridge regression)
+        """
+        self.regularization = regularization
+
+    def _reconstruct(
+        self,
+        measurements: np.ndarray,
+        measurement_matrix: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Reconstruct signal using regularized least-squares (ridge regression).
+        
+        Args:
+            measurements: Measurement vector y
+            measurement_matrix: Measurement matrix Φ
+            
+        Returns:
+            Reconstructed signal
+        """
+        m, n = measurement_matrix.shape
+        
+        # Use ridge regression: x = (Φ^T Φ + λI)^(-1) Φ^T y
+        # This is more stable and faster than OMP for this application
+        try:
+            phi_t = measurement_matrix.T
+            phi_t_phi = phi_t @ measurement_matrix
+            
+            # Add regularization to diagonal
+            reg_matrix = phi_t_phi + self.regularization * np.eye(n, dtype=np.float32)
+            
+            # Solve: reg_matrix @ x = Φ^T y
+            phi_t_y = phi_t @ measurements
+            signal = np.linalg.solve(reg_matrix, phi_t_y)
+            
+        except np.linalg.LinAlgError:
+            # Fallback to pseudo-inverse if solve fails
+            try:
+                signal = np.linalg.lstsq(measurement_matrix, measurements, rcond=None)[0]
+            except np.linalg.LinAlgError:
+                # Last resort: return zeros
+                signal = np.zeros(n, dtype=np.float32)
+        
+        return signal
+
+    def decode_chunk(self, chunk: EncodedChunk) -> np.ndarray:
+        """Decode a CS chunk back to image."""
+        data = chunk.data
+        if len(data) <= self.HEADER_STRUCT.size:
+            raise RuntimeError("CS 資料長度不正確")
+        
+        # Unpack header
+        header = data[:self.HEADER_STRUCT.size]
+        version, width, height, num_measurements, seed_high, seed_low = self.HEADER_STRUCT.unpack(header)
+        
+        if version != CSEncoder.VERSION:
+            raise RuntimeError(f"CS 版本不支援: {version}")
+        
+        # Reconstruct seed
+        seed = (seed_high << 16) | seed_low
+        
+        # Decompress measurements
+        compressed = data[self.HEADER_STRUCT.size:]
+        try:
+            decompressed = zlib.decompress(compressed)
+        except zlib.error as exc:
+            raise RuntimeError(f"CS 解壓失敗: {exc}") from exc
+        
+        # Verify size
+        expected_bytes = 3 * num_measurements * np.dtype(np.int16).itemsize
+        if len(decompressed) != expected_bytes:
+            raise RuntimeError("CS 解壓後長度不符")
+        
+        # Reshape measurements
+        measurements = np.frombuffer(decompressed, dtype=np.int16).reshape((3, num_measurements)).astype(np.float32)
+        
+        # Regenerate measurement matrix with same seed
+        signal_length = width * height
+        rng = np.random.RandomState(seed)
+        measurement_matrix = rng.randn(num_measurements, signal_length).astype(np.float32)
+        row_norms = np.linalg.norm(measurement_matrix, axis=1, keepdims=True)
+        measurement_matrix /= (row_norms + 1e-8)
+        
+        # Reconstruct each channel
+        reconstructed_channels = []
+        for c in range(3):
+            signal = self._reconstruct(
+                measurements[c],
+                measurement_matrix
+            )
+            channel = signal.reshape((height, width))
+            # Clip to valid range
+            channel = np.clip(channel, 0, 255)
+            reconstructed_channels.append(channel)
+        
+        # Stack channels and convert to uint8
+        frame_bgr = np.stack(reconstructed_channels, axis=2).astype(np.uint8)
+        return frame_bgr
+
+    def decode(self, chunk: EncodedChunk) -> Iterable[np.ndarray]:
+        if chunk.is_config:
+            return []
+        return [self.decode_chunk(chunk)]
+
+    def flush(self) -> Iterable[np.ndarray]:
+        return []
+
+
 class ContourDecoder:
     """Reconstructs contour renderings from Fourier coefficients."""
 
@@ -804,9 +1062,10 @@ class H264Decoder:
         self._wavelet_decoder = WaveletDecoder()
         self._contour_decoder = ContourDecoder()
         self._detection_decoder = DetectionDecoder()
+        self._cs_decoder = CSDecoder()
 
     def _open_codec(self, codec_name: VideoCodec) -> Any:
-        if codec_name in {"wavelet", "contour", "yolo"}:
+        if codec_name in {"wavelet", "contour", "yolo", "cs"}:
             raise RuntimeError("該編碼器應透過專用路徑建立")
         if self.codec is not None and self._codec_name == codec_name:
             return self.codec
@@ -851,6 +1110,11 @@ class H264Decoder:
             if chunk.is_config:
                 return []
             return [self._detection_decoder.decode_chunk(chunk)]
+        if codec_name == "cs":
+            self._codec_name = "cs"
+            if chunk.is_config:
+                return []
+            return [self._cs_decoder.decode_chunk(chunk)]
         if codec_name == "jpeg":
             self._codec_name = "jpeg"
             if chunk.is_config:
@@ -885,6 +1149,8 @@ class H264Decoder:
         if self._codec_name == "contour":
             return []
         if self._codec_name == "yolo":
+            return []
+        if self._codec_name == "cs":
             return []
         if self.codec is None:
             return []
