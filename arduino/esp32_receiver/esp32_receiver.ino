@@ -19,23 +19,108 @@
 
 // 緩衝區大小
 #define LORA_BUFFER_SIZE 512
-// Reserve enough space for the largest frame (JPEG/CS) plus protocol overhead
-// MAX_FRAME_SIZE is 65535 bytes, so 7000000 keeps a safety margin.
-#define USB_BUFFER_SIZE 7000000
+#define MAX_FRAME_SIZE 65535
+#define USB_BUFFER_SIZE (MAX_FRAME_SIZE + 16)
 
 // 使用 ESP32 的第二個串口連接 LoRa 模組
 HardwareSerial LoRaSerial(2);
 
 // 緩衝區
 uint8_t lora_buffer[LORA_BUFFER_SIZE];
-uint8_t usb_buffer[USB_BUFFER_SIZE];
-size_t usb_buffer_pos = 0;
+uint8_t frame_buffer[USB_BUFFER_SIZE];
+
+enum FrameState {
+  SeekingStart,
+  CollectingFrame
+};
+
+FrameState frame_state = SeekingStart;
+size_t frame_buffer_pos = 0;
+size_t expected_frame_length = 0;
+size_t start_match = 0;
 
 // 幀標記
 const uint8_t FRAME_START[] = {0xAA, 0x55};
 const uint8_t FRAME_END[] = {0x55, 0xAA};
 
+void reset_frame_state() {
+  frame_state = SeekingStart;
+  frame_buffer_pos = 0;
+  expected_frame_length = 0;
+  start_match = 0;
+}
+
+void try_resync_with_byte(uint8_t byte) {
+  if (byte == FRAME_START[0]) {
+    frame_buffer[0] = byte;
+    start_match = 1;
+  }
+}
+
+void process_byte(uint8_t byte) {
+  if (frame_state == SeekingStart) {
+    if (start_match == 0) {
+      if (byte == FRAME_START[0]) {
+        frame_buffer[0] = byte;
+        start_match = 1;
+      }
+    } else {  // start_match == 1
+      if (byte == FRAME_START[1]) {
+        frame_buffer[1] = byte;
+        frame_buffer_pos = 2;
+        frame_state = CollectingFrame;
+        expected_frame_length = 0;
+        start_match = 0;
+      } else if (byte == FRAME_START[0]) {
+        frame_buffer[0] = byte;
+        start_match = 1;
+      } else {
+        start_match = 0;
+      }
+    }
+    return;
+  }
+
+  // Collecting frame payload
+  if (frame_buffer_pos >= USB_BUFFER_SIZE) {
+    Serial.println("\nWARN: Frame buffer overflow, dropping");
+    reset_frame_state();
+    try_resync_with_byte(byte);
+    return;
+  }
+
+  frame_buffer[frame_buffer_pos++] = byte;
+
+  // Once header is complete determine expected length
+  if (frame_buffer_pos == 5 && expected_frame_length == 0) {
+    size_t payload_length = (static_cast<size_t>(frame_buffer[3]) << 8) | frame_buffer[4];
+    if (payload_length == 0 || payload_length > MAX_FRAME_SIZE) {
+      Serial.println("\nWARN: Invalid frame length, dropping");
+      reset_frame_state();
+      try_resync_with_byte(byte);
+      return;
+    }
+    expected_frame_length = payload_length + 9;  // full frame including markers
+  }
+
+  if (expected_frame_length > 0 && frame_buffer_pos == expected_frame_length) {
+    bool has_valid_end =
+        frame_buffer[frame_buffer_pos - 2] == FRAME_END[0] &&
+        frame_buffer[frame_buffer_pos - 1] == FRAME_END[1];
+
+    if (has_valid_end) {
+      Serial.write(frame_buffer, frame_buffer_pos);
+      Serial.flush();
+    } else {
+      Serial.println("\nWARN: Frame end mismatch, dropping");
+    }
+
+    reset_frame_state();
+  }
+}
+
 void setup() {
+  reset_frame_state();
   // 初始化 USB Serial (連接電腦)
   Serial.begin(115200);
   
@@ -65,51 +150,10 @@ void loop() {
   if (LoRaSerial.available() > 0) {
     // 批次讀取以提升效率
     size_t bytes_read = LoRaSerial.readBytes(lora_buffer, LORA_BUFFER_SIZE);
-    
+
     if (bytes_read > 0) {
-      // 將接收到的資料加入 USB 緩衝區
       for (size_t i = 0; i < bytes_read; i++) {
-        if (usb_buffer_pos < USB_BUFFER_SIZE) {
-          usb_buffer[usb_buffer_pos++] = lora_buffer[i];
-          
-          // 檢查是否收到完整幀 (以 FRAME_END 標記結束)
-          if (usb_buffer_pos >= 2) {
-            if (usb_buffer[usb_buffer_pos - 2] == FRAME_END[0] && 
-                usb_buffer[usb_buffer_pos - 1] == FRAME_END[1]) {
-              
-              // 完整幀接收完畢，轉發到 USB Serial
-              Serial.write(usb_buffer, usb_buffer_pos);
-              Serial.flush();
-              
-              // 可選的除錯輸出（取消註解以啟用）
-              // Serial.print("\nForwarded frame to PC: ");
-              // Serial.print(usb_buffer_pos);
-              // Serial.println(" bytes");
-              
-              // 重置緩衝區
-              usb_buffer_pos = 0;
-            }
-          }
-        } else {
-          // 緩衝區溢位 - 尋找下一個 FRAME_START 重新同步
-          Serial.println("\nERROR: USB buffer overflow, resetting");
-          usb_buffer_pos = 0;
-          
-          // 尋找 FRAME_START
-          bool found_start = false;
-          for (size_t j = i; j < bytes_read - 1 && !found_start; j++) {
-            if (lora_buffer[j] == FRAME_START[0] && lora_buffer[j + 1] == FRAME_START[1]) {
-              usb_buffer[0] = lora_buffer[j];
-              usb_buffer[1] = lora_buffer[j + 1];
-              usb_buffer_pos = 2;
-              i = j + 1;
-              found_start = true;
-            }
-          }
-          if (!found_start) {
-            break;  // 跳出當前批次，等待下一次讀取
-          }
-        }
+        process_byte(lora_buffer[i]);
       }
     }
   }
