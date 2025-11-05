@@ -70,6 +70,13 @@ class FrameProtocolTest(unittest.TestCase):
         self.assertEqual(decoded, payload)
         self.assertEqual(len(crc_str), 8)
 
+    def test_use_ack_property(self) -> None:
+        """Test that use_ack property exists and returns False (ACK not supported)."""
+        self.assertFalse(self.protocol.use_ack)
+        # Verify it's a read-only property
+        with self.assertRaises(AttributeError):
+            self.protocol.use_ack = True  # type: ignore
+
 
 if __name__ == "__main__":
     unittest.main()
