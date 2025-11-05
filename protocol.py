@@ -28,6 +28,9 @@ BAUD_RATE = 115_200
 FRAME_PREFIX = "FRAME"
 """ASCII prefix for frame identification."""
 
+FRAME_PREFIX_BYTES = b"FRAME "
+"""ASCII prefix as bytes for efficient frame detection (used in LoRa fallback)."""
+
 SYNC_MARKER = b"\xDE\xAD\xBE\xEF"
 """Binary sync marker for frame boundary detection."""
 
@@ -460,8 +463,7 @@ class FrameProtocol:
             return True
         
         # Fallback: Try to find ASCII "FRAME " prefix (for LoRa transmissions)
-        frame_prefix_bytes = FRAME_PREFIX.encode("ascii") + b" "
-        idx = buffer.find(frame_prefix_bytes)
+        idx = buffer.find(FRAME_PREFIX_BYTES)
         if idx != -1:
             # Found "FRAME " - sync to the start of this frame
             del buffer[:idx]
