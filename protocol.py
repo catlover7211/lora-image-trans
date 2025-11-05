@@ -331,7 +331,11 @@ class FrameProtocol:
         return encoded
 
     def _read_serial_chunk(self, ser: SerialLike, *, wait: bool) -> bytes:
-        """Read a small chunk from the serial port respecting blocking preference."""
+        """Read a small chunk from the serial port respecting blocking preference.
+        
+        Optimized to read larger chunks when data is available to reduce
+        system call overhead and improve throughput.
+        """
         max_bytes = self.chunk_size
         available = 0
         try:
@@ -343,7 +347,9 @@ class FrameProtocol:
             return b""
 
         if available > 0:
-            max_bytes = max(1, min(max_bytes, available))
+            # Read up to double the chunk size when more data is available
+            # This reduces the number of read calls for large frames
+            max_bytes = max(1, min(self.chunk_size * 2, available))
 
         try:
             return ser.read(max_bytes)
@@ -357,7 +363,11 @@ class FrameProtocol:
             self._pending_ascii.clear()
 
     def _synchronize(self, ser: SerialLike, timeout: Optional[float] = None) -> bool:
-        """Search for the sync marker in the input buffer with a timeout."""
+        """Search for the sync marker in the input buffer with a timeout.
+        
+        Optimized to handle large buffers more efficiently and reduce
+        memory allocations during synchronization.
+        """
         if self._synced:
             return True
 
@@ -366,6 +376,9 @@ class FrameProtocol:
         self._pending_ascii.clear()
         start_time = time.monotonic()
         wait_for_data = timeout is None or timeout > 0
+        
+        # Maximum buffer size before trimming (2x encoded size for safety)
+        max_buffer_size = self.max_encoded_size * 2
 
         while True:
             # Check for sync marker in current buffer
@@ -387,9 +400,13 @@ class FrameProtocol:
                 continue
 
             buffer.extend(chunk)
+            
             # Prevent buffer from growing too large
-            if len(buffer) > self.max_encoded_size * 2:
-                buffer = buffer[-(self.max_encoded_size * 2):]
+            # Only trim when significantly over limit to reduce operations
+            if len(buffer) > max_buffer_size + self.chunk_size:
+                # Keep most recent data, discarding older data that didn't contain sync marker
+                excess = len(buffer) - max_buffer_size
+                del buffer[:excess]
 
     def _try_find_sync_marker(self, buffer: bytearray, marker_len: int) -> bool:
         """Try to find sync marker in buffer, updating state if found."""
