@@ -226,6 +226,7 @@ def main() -> None:
     decoder = H264Decoder()
 
     _print_connection_info(args.lenient)
+    _create_waiting_window(WINDOW_TITLE)
 
     # Setup queue and worker thread
     rx_buffer_size = max(1, args.rx_buffer)
@@ -251,6 +252,40 @@ def _print_connection_info(lenient: bool) -> None:
     print(f"接收容錯模式: {'寬鬆' if lenient else '嚴格'}")
     print("已連接序列埠，開始等待接收影像...")
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")
+
+
+def _create_waiting_window(window_title: str) -> None:
+    """Create a display window with a waiting message.
+    
+    This creates the window at startup so users have immediate visual feedback
+    and can quit with 'q' key even before receiving the first frame.
+    """
+    # Create a simple black image with text
+    waiting_image = np.zeros((480, 640, 3), dtype=np.uint8)
+    
+    # Add "Waiting for frames..." text in the center
+    text = "Waiting for frames..."
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1.0
+    font_thickness = 2
+    
+    # Get text size to center it
+    (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, font_thickness)
+    text_x = (waiting_image.shape[1] - text_width) // 2
+    text_y = (waiting_image.shape[0] + text_height) // 2
+    
+    # Draw text in white
+    cv2.putText(waiting_image, text, (text_x, text_y), font, font_scale, (255, 255, 255), font_thickness)
+    
+    # Add instruction text
+    instruction_text = "Press 'q' to quit"
+    (inst_width, inst_height), _ = cv2.getTextSize(instruction_text, font, 0.6, 1)
+    inst_x = (waiting_image.shape[1] - inst_width) // 2
+    inst_y = text_y + 50
+    cv2.putText(waiting_image, instruction_text, (inst_x, inst_y), font, 0.6, (180, 180, 180), 1)
+    
+    # Show the window
+    cv2.imshow(window_title, waiting_image)
 
 
 def _check_quit_key(stop_event: threading.Event) -> bool:
