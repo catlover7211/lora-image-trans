@@ -19,7 +19,9 @@
 
 // 緩衝區大小
 #define LORA_BUFFER_SIZE 512
-#define USB_BUFFER_SIZE 4096
+// Reserve enough space for the largest frame (JPEG/CS) plus protocol overhead
+// MAX_FRAME_SIZE is 65535 bytes, so 7000000 keeps a safety margin.
+#define USB_BUFFER_SIZE 7000000
 
 // 使用 ESP32 的第二個串口連接 LoRa 模組
 HardwareSerial LoRaSerial(2);
