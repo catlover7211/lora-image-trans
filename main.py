@@ -1,3 +1,13 @@
+"""Video frame receiver for serial communication.
+
+This module receives, decodes, and displays video frames transmitted over serial.
+It supports multiple codecs (H.264, H.265, AV1, JPEG, Wavelet, Contour, YOLO, CS)
+and includes features like:
+- Multi-threaded reception for smooth playback
+- Error reporting with cool-down to prevent console flooding
+- Queue-based buffering to handle transmission irregularities
+- CRC validation for data integrity
+"""
 import argparse
 import queue
 import threading
@@ -12,9 +22,17 @@ from h264_codec import EncodedChunk, H264Decoder
 from image_settings import DEFAULT_IMAGE_SETTINGS
 from protocol import BAUD_RATE, FrameProtocol, FrameStats, auto_detect_serial_port
 
-MAX_PAYLOAD_SIZE = 1920 * 1080  # 允許的最大影像資料大小（反填充後）
+MAX_PAYLOAD_SIZE = 1920 * 1080
+"""Maximum allowed image data size (after unstuffing)."""
+
 WINDOW_TITLE = 'Received CCTV (Press q to quit)'
+"""Window title for the display window."""
+
 DEFAULT_RX_BUFFER = DEFAULT_IMAGE_SETTINGS.rx_buffer_size
+"""Default receive buffer size in frames."""
+
+ERROR_COOLDOWN_SECONDS = 5.0
+"""Minimum seconds between reporting identical errors."""
 
 
 def create_receiver_worker(
@@ -23,11 +41,26 @@ def create_receiver_worker(
     frame_queue: "queue.Queue[tuple[EncodedChunk, FrameStats]]",
     stop_event: threading.Event,
 ) -> tuple[callable, dict]:
-    """Create a receiver worker function with shared state."""
+    """Create a receiver worker function with shared state.
+    
+    This function creates a worker that continuously receives frames from the serial
+    port and places them in a queue for processing. It implements error cool-down
+    to prevent console flooding with repetitive error messages.
+    
+    Args:
+        protocol: The FrameProtocol instance for decoding frames.
+        ser: The serial port to read from.
+        frame_queue: Queue for passing received frames to the main thread.
+        stop_event: Event to signal the worker to stop.
+    
+    Returns:
+        A tuple of (worker_function, state_dict) where state_dict contains
+        worker state like error tracking and dropped chunk counts.
+    """
     state = {
         'last_error_reported': None,
         'last_error_time': 0.0,
-        'error_cooldown': 5.0,  # Report same error at most once every 5 seconds
+        'error_cooldown': ERROR_COOLDOWN_SECONDS,
         'dropped_chunks': 0
     }
     

@@ -1,4 +1,12 @@
-"""Shared serial video frame protocol utilities using ASCII framing."""
+"""Shared serial video frame protocol utilities using ASCII framing.
+
+This module provides a robust protocol for transmitting video frames over serial connections.
+The protocol features:
+- ASCII-based framing with base64 encoding for binary data
+- CRC32 checksums for data integrity
+- Sync markers for reliable frame boundary detection
+- Configurable lenient mode for lossy connections
+"""
 from __future__ import annotations
 
 import base64
@@ -15,13 +23,28 @@ import serial  # type: ignore
 # Protocol constants
 # ---------------------------------------------------------------------------
 BAUD_RATE = 115_200
+"""Default baud rate for serial communication."""
+
 FRAME_PREFIX = "FRAME"
-SYNC_MARKER = b"\xDE\xAD\xBE\xEF"  # 新增同步標記
+"""ASCII prefix for frame identification."""
+
+SYNC_MARKER = b"\xDE\xAD\xBE\xEF"
+"""Binary sync marker for frame boundary detection."""
+
 FIELD_SEPARATOR = " "
+"""Separator between frame header fields."""
+
 LINE_TERMINATOR = "\n"
+"""Frame terminator character."""
+
 DEFAULT_CHUNK_SIZE = 220
+"""Default size for chunking frames during transmission."""
+
 DEFAULT_INTER_CHUNK_DELAY = 0  # seconds
+"""Default delay between chunks (0 = no delay)."""
+
 DEFAULT_MAX_PAYLOAD_SIZE = 1920 * 1080  # 128 KB (raw payload)
+"""Maximum allowed payload size to prevent memory issues."""
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +108,16 @@ class SerialLike(Protocol):
 
 
 class FrameProtocol:
-    """Utility responsible for framing, validation, and transport orchestration."""
+    """Protocol handler for reliable frame transmission over serial connections.
+    
+    This class manages the encoding, transmission, and reception of frames using:
+    - Base64 encoding for ASCII-safe transmission
+    - CRC32 checksums for data integrity validation
+    - Sync markers for reliable frame boundary detection
+    - Optional lenient mode for handling lossy connections
+    
+    The protocol is designed to work with the ESP32 firmware without ACK support.
+    """
 
     def __init__(
         self,
@@ -95,6 +127,17 @@ class FrameProtocol:
         max_payload_size: int = DEFAULT_MAX_PAYLOAD_SIZE,
         lenient: bool = False,
     ) -> None:
+        """Initialize the frame protocol handler.
+        
+        Args:
+            chunk_size: Size of chunks for splitting frames during transmission.
+            inter_chunk_delay: Delay in seconds between chunk transmissions.
+            max_payload_size: Maximum allowed payload size in bytes.
+            lenient: If True, tolerate some length/CRC mismatches (for lossy connections).
+        
+        Raises:
+            ValueError: If chunk_size is not positive.
+        """
         if chunk_size <= 0:
             raise ValueError("chunk_size 必須為正整數")
         self.chunk_size = chunk_size
