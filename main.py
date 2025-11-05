@@ -12,6 +12,7 @@ import argparse
 import queue
 import threading
 import time
+from dataclasses import dataclass, field
 from typing import Optional
 
 import cv2
@@ -39,6 +40,129 @@ DEFAULT_RX_BUFFER = DEFAULT_IMAGE_SETTINGS.rx_buffer_size
 
 ERROR_COOLDOWN_SECONDS = 5.0
 """Minimum seconds between reporting identical errors."""
+
+
+@dataclass
+class FrameStatistics:
+    """Tracks statistics for pending frame fragments.
+    
+    This class encapsulates the logic for accumulating statistics across
+    multiple frame fragments and calculating compression metrics.
+    """
+    pending_stats: list[FrameStats] = field(default_factory=list)
+    pending_fragments: int = 0
+    
+    def add_fragment(self, stats: FrameStats) -> None:
+        """Add statistics for a received fragment."""
+        self.pending_stats.append(stats)
+        self.pending_fragments += 1
+    
+    def reset(self) -> None:
+        """Clear all accumulated statistics."""
+        self.pending_stats.clear()
+        self.pending_fragments = 0
+    
+    def get_compression_summary(self) -> dict:
+        """Calculate and return compression statistics.
+        
+        Returns:
+            Dictionary with total_payload, total_encoded, compression_ratio,
+            and fragment_count.
+        """
+        total_payload = sum(stat.payload_size for stat in self.pending_stats)
+        total_encoded = sum(stat.stuffed_size for stat in self.pending_stats)
+        compression_ratio = (total_encoded / total_payload * 100) if total_payload > 0 else 0
+        
+        return {
+            'total_payload': total_payload,
+            'total_encoded': total_encoded,
+            'compression_ratio': compression_ratio,
+            'fragment_count': self.pending_fragments
+        }
+
+
+class ImageProcessor:
+    """Processes encoded chunks into decoded image frames.
+    
+    This class encapsulates the logic for decoding video chunks, tracking codec
+    changes, and managing frame statistics.
+    """
+    
+    def __init__(self, decoder: H264Decoder):
+        """Initialize the image processor.
+        
+        Args:
+            decoder: The decoder instance to use for decoding chunks.
+        """
+        self.decoder = decoder
+        self.current_codec: Optional[str] = None
+        self.statistics = FrameStatistics()
+    
+    def process_chunk(self, chunk: EncodedChunk, stats: FrameStats) -> list[np.ndarray]:
+        """Process a single encoded chunk.
+        
+        Args:
+            chunk: The encoded chunk to process.
+            stats: Statistics about the received chunk.
+        
+        Returns:
+            List of decoded frames (may be empty).
+        """
+        self.statistics.add_fragment(stats)
+        
+        # Handle codec configuration changes
+        if chunk.is_config and chunk.codec != self.current_codec:
+            self.current_codec = chunk.codec
+            print(f"收到編碼器設定: {self.current_codec.upper()} (extradata {len(chunk.data)} bytes)")
+        
+        # Decode the chunk
+        try:
+            decoded_frames = list(self.decoder.decode(chunk))
+        except RuntimeError as exc:
+            print(f"解碼失敗: {exc}")
+            self.statistics.reset()
+            decoded_frames = []
+        
+        return decoded_frames
+    
+    def get_statistics(self) -> FrameStatistics:
+        """Get the current frame statistics tracker."""
+        return self.statistics
+
+
+class ImageDisplay:
+    """Handles image display and statistics reporting.
+    
+    This class encapsulates the logic for displaying frames and printing
+    statistics about transmission and compression.
+    """
+    
+    def __init__(self, window_title: str):
+        """Initialize the image display.
+        
+        Args:
+            window_title: Title for the display window.
+        """
+        self.window_title = window_title
+    
+    def show_frame(self, image: np.ndarray, statistics: FrameStatistics) -> None:
+        """Display a frame and print its statistics.
+        
+        Args:
+            image: The image to display.
+            statistics: Frame statistics to print.
+        """
+        summary = statistics.get_compression_summary()
+        
+        print(
+            f"封包: {summary['total_payload']} bytes, "
+            f"編碼後: {summary['total_encoded']} bytes "
+            f"(膨脹率: {summary['compression_ratio']:.1f}%), "
+            f"分片: {summary['fragment_count']}"
+        )
+        
+        cv2.imshow(self.window_title, image)
+        statistics.reset()
 
 
 def create_receiver_worker(
@@ -137,59 +261,6 @@ def _enqueue_chunk(
             state['dropped_chunks'] += 1
             print(f"警告: 接收緩衝區已滿，已捨棄最舊片段以插入新片段 (累積捨棄: {state['dropped_chunks']})")
             break
-
-
-def process_frame(
-    chunk: EncodedChunk,
-    stats: FrameStats,
-    decoder: H264Decoder,
-    current_codec: Optional[str],
-    pending_stats: list[FrameStats],
-    pending_fragments: int
-) -> tuple[list, Optional[str], int]:
-    """Process a single frame chunk and return decoded frames."""
-    pending_stats.append(stats)
-    pending_fragments += 1
-
-    if chunk.is_config and chunk.codec != current_codec:
-        current_codec = chunk.codec
-        print(f"收到編碼器設定: {current_codec.upper()} (extradata {len(chunk.data)} bytes)")
-
-    try:
-        decoded_frames = list(decoder.decode(chunk))
-    except RuntimeError as exc:
-        print(f"解碼失敗: {exc}")
-        pending_stats.clear()
-        pending_fragments = 0
-        decoded_frames = []
-
-    return decoded_frames, current_codec, pending_fragments
-
-
-def display_frame(
-    image: np.ndarray,
-    pending_stats: list[FrameStats],
-    pending_fragments: int,
-    window_title: str
-) -> tuple[list, int]:
-    """Display a frame and print statistics."""
-    total_payload = sum(stat.payload_size for stat in pending_stats)
-    total_ascii = sum(stat.stuffed_size for stat in pending_stats)
-    fragment_count = pending_fragments
-    
-    # Calculate compression ratio
-    compression_ratio = (total_ascii / total_payload * 100) if total_payload > 0 else 0
-    
-    print(
-        f"封包: {total_payload} bytes, "
-        f"編碼後: {total_ascii} bytes "
-        f"(膨脹率: {compression_ratio:.1f}%), "
-        f"分片: {fragment_count}"
-    )
-    
-    cv2.imshow(window_title, image)
-    
-    return [], 0  # Clear pending stats and fragments
 
 
 def parse_args() -> argparse.Namespace:
@@ -317,9 +388,8 @@ def _main_processing_loop(
     stop_event: threading.Event
 ) -> None:
     """Main loop for processing received frames."""
-    current_codec: Optional[str] = None
-    pending_stats: list[FrameStats] = []
-    pending_fragments = 0
+    processor = ImageProcessor(decoder)
+    display = ImageDisplay(WINDOW_TITLE)
 
     while not stop_event.is_set():
         try:
@@ -331,9 +401,7 @@ def _main_processing_loop(
             continue
 
         try:
-            decoded_frames, current_codec, pending_fragments = process_frame(
-                chunk, stats, decoder, current_codec, pending_stats, pending_fragments
-            )
+            decoded_frames = processor.process_chunk(chunk, stats)
         finally:
             frame_queue.task_done()
 
@@ -351,9 +419,7 @@ def _main_processing_loop(
                 break
             continue
 
-        pending_stats, pending_fragments = display_frame(
-            image, pending_stats, pending_fragments, WINDOW_TITLE
-        )
+        display.show_frame(image, processor.get_statistics())
 
         if _check_quit_key(stop_event):
             break
