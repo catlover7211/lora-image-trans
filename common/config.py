@@ -16,12 +16,12 @@ DEFAULT_HEIGHT = 24
 DEFAULT_JPEG_QUALITY = 85
 
 # Compressed Sensing settings
-CS_MEASUREMENT_RATE = 0.3  # 30% sampling rate
+CS_MEASUREMENT_RATE = 0.1  # 10% sampling rate
 CS_BLOCK_SIZE = 8
 
 # Buffer settings
-MAX_FRAME_SIZE = 65535  # Maximum 2^16-1 bytes per frame
-CHUNK_SIZE = 240  # Bytes per chunk for LoRa transmission
+MAX_FRAME_SIZE = 700000  # Maximum 2^16-1 bytes per frame
+CHUNK_SIZE = 220  # Bytes per chunk for LoRa transmission
 
 # Display settings
 WINDOW_TITLE_SENDER = 'CCTV Sender (Press q to quit)'
