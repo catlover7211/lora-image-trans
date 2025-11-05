@@ -4,16 +4,19 @@ This application receives encoded images via serial port from ESP32,
 decodes them (JPEG or CS), and displays them.
 """
 import argparse
+import sys
 import time
-from typing import Optional
+from pathlib import Path
 
 import cv2
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from jpeg_decoder import JPEGDecoder
 from cs_decoder import CSDecoder
 from serial_comm import SerialComm
-import sys
-sys.path.insert(0, '..')
 from common.protocol import decode_frame, get_frame_type_name, TYPE_JPEG, TYPE_CS
 from common.config import WINDOW_TITLE_RECEIVER
 
