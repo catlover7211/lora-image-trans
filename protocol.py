@@ -22,9 +22,6 @@ LINE_TERMINATOR = "\n"
 DEFAULT_CHUNK_SIZE = 220
 DEFAULT_INTER_CHUNK_DELAY = 0  # seconds
 DEFAULT_MAX_PAYLOAD_SIZE = 1920 * 1080  # 128 KB (raw payload)
-ACK_MESSAGE = b"ACK\n"
-DEFAULT_ACK_TIMEOUT = 2
-DEFAULT_INITIAL_ACK_SKIP = 1
 
 
 # ---------------------------------------------------------------------------
@@ -96,9 +93,6 @@ class FrameProtocol:
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         inter_chunk_delay: float = DEFAULT_INTER_CHUNK_DELAY,
         max_payload_size: int = DEFAULT_MAX_PAYLOAD_SIZE,
-        use_chunk_ack: bool = False,
-        ack_timeout: float = DEFAULT_ACK_TIMEOUT,
-        initial_skip_acks: int = DEFAULT_INITIAL_ACK_SKIP,
         lenient: bool = False,
     ) -> None:
         if chunk_size <= 0:
@@ -108,10 +102,6 @@ class FrameProtocol:
         self.max_payload_size = max_payload_size
         # Upper bound for encoded ASCII length (base64 expands ~4/3)
         self.max_encoded_size = int(max_payload_size * 4 / 3) + 16
-        self.use_chunk_ack = use_chunk_ack
-        self.ack_timeout = max(0.0, ack_timeout)
-        self._acks_to_skip = max(0, initial_skip_acks)
-        self._ack_established = False
         self._last_error: Optional[str] = None
         self._pending_ascii: bytearray = bytearray()
         self._lenient = lenient
@@ -143,20 +133,6 @@ class FrameProtocol:
             ser.write(chunk)
             if self.inter_chunk_delay:
                 time.sleep(self.inter_chunk_delay)
-            if not self.use_chunk_ack:
-                continue
-            if self._acks_to_skip > 0:
-                self._acks_to_skip -= 1
-                continue
-            if self._wait_for_ack(ser):
-                self._ack_established = True
-                continue
-            if not self._ack_established:
-                # 尚未建立 ACK 聯繫，降級為無 ACK 模式避免阻塞
-                self.use_chunk_ack = False
-                self._last_error = "尚未收到 ACK，已降級為無 ACK 模式"
-                continue
-            raise TimeoutError("等待 ACK 時間逾時")
         ser.flush()
         return stats
 
@@ -168,7 +144,7 @@ class FrameProtocol:
     # -------------------------- Decoding helpers --------------------------
     def receive_frame(self, ser: SerialLike, *, block: bool = True, timeout: Optional[float] = None) -> Optional[Frame]:
         """Attempt to read and validate a single ASCII framed payload from *ser*."""
-        sync_timeout = timeout if timeout is not None else (self.ack_timeout if block else 0)
+        sync_timeout = timeout if timeout is not None else (2.0 if block else 0)
 
         if not self._synced and not self._synchronize(ser, timeout=sync_timeout):
             self._set_error_if_blocking("無法同步到封包標記 (超時)", block, sync_timeout)
@@ -378,25 +354,6 @@ class FrameProtocol:
             self._synced = True
             return True
         return False
-
-    def _wait_for_ack(self, ser: SerialLike) -> bool:
-        """Wait for an ACK message from the remote."""
-        if self.ack_timeout <= 0:
-            return True
-        deadline = time.monotonic() + self.ack_timeout
-        buffer = bytearray()
-        while True:
-            if time.monotonic() > deadline:
-                return False
-            chunk = ser.read(1)
-            if chunk:
-                buffer.extend(chunk)
-                if len(buffer) > len(ACK_MESSAGE):
-                    del buffer[:-len(ACK_MESSAGE)]
-                if buffer.endswith(ACK_MESSAGE):
-                    return True
-                continue
-            time.sleep(0.001)
 
     def _read_line(self, ser: SerialLike, *, block: bool = True, timeout: Optional[float] = None) -> Optional[bytes]:
         """Read the next newline-terminated ASCII frame payload."""

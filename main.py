@@ -26,6 +26,8 @@ def create_receiver_worker(
     """Create a receiver worker function with shared state."""
     state = {
         'last_error_reported': None,
+        'last_error_time': 0.0,
+        'error_cooldown': 5.0,  # Report same error at most once every 5 seconds
         'dropped_chunks': 0
     }
     
@@ -42,9 +44,14 @@ def create_receiver_worker(
 
             if framed is None:
                 error = protocol.last_error
-                if error and error != state['last_error_reported']:
-                    print(f"接收失敗: {error}")
-                    state['last_error_reported'] = error
+                if error:
+                    current_time = time.time()
+                    # Only report if it's a different error or enough time has passed
+                    if (error != state['last_error_reported'] or 
+                        current_time - state['last_error_time'] >= state['error_cooldown']):
+                        print(f"接收失敗: {error}")
+                        state['last_error_reported'] = error
+                        state['last_error_time'] = current_time
                 time.sleep(0.005)
                 continue
 
@@ -143,9 +150,6 @@ def display_frame(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Receive CCTV frames over serial and display them.')
-    ack_group = parser.add_mutually_exclusive_group()
-    ack_group.add_argument('--ack', action='store_true', help='強制啟用 chunk 級 ACK。需與傳送端一致。')
-    ack_group.add_argument('--no-ack', action='store_true', help='強制停用 chunk 級 ACK。需與傳送端一致。')
     parser.add_argument('--rx-buffer', type=int, default=DEFAULT_RX_BUFFER, help='接收端佇列容量 (幀數，預設: %(default)s)')
     parser.add_argument('--lenient', action='store_true', help='寬鬆模式：忽略部分長度/CRC 驗證，盡量嘗試解碼。')
     return parser.parse_args()
@@ -177,15 +181,13 @@ def main() -> None:
     if ser is None:
         return
 
-    use_chunk_ack = _determine_ack_mode(args)
     protocol = FrameProtocol(
         max_payload_size=MAX_PAYLOAD_SIZE,
-        use_chunk_ack=use_chunk_ack,
         lenient=args.lenient,
     )
     decoder = H264Decoder()
 
-    _print_connection_info(use_chunk_ack, args.lenient)
+    _print_connection_info(args.lenient)
 
     # Setup queue and worker thread
     rx_buffer_size = max(1, args.rx_buffer)
@@ -205,19 +207,9 @@ def main() -> None:
         _cleanup(stop_event, receiver_thread, ser)
 
 
-def _determine_ack_mode(args: argparse.Namespace) -> bool:
-    """Determine ACK mode from command line arguments."""
-    use_chunk_ack = DEFAULT_IMAGE_SETTINGS.use_chunk_ack
-    if args.ack:
-        use_chunk_ack = True
-    elif args.no_ack:
-        use_chunk_ack = False
-    return use_chunk_ack
-
-
-def _print_connection_info(use_chunk_ack: bool, lenient: bool) -> None:
+def _print_connection_info(lenient: bool) -> None:
     """Print connection and configuration information."""
-    print(f"串流 ACK 模式: {'啟用' if use_chunk_ack else '停用'}")
+    print(f"串流 ACK 模式: 停用 (與 ESP32 韌體相容)")
     print(f"接收容錯模式: {'寬鬆' if lenient else '嚴格'}")
     print("已連接序列埠，開始等待接收影像...")
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")
