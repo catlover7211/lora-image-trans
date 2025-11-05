@@ -167,20 +167,24 @@ class FrameProtocol:
     # -------------------------- Decoding helpers --------------------------
     def receive_frame(self, ser: SerialLike, *, block: bool = True, timeout: Optional[float] = None) -> Optional[Frame]:
         """Attempt to read and validate a single ASCII framed payload from *ser*."""
+        # For blocking calls, use the ACK timeout as the base, otherwise non-blocking.
         sync_timeout = timeout if timeout is not None else (self.ack_timeout if block else 0)
+        
         if not self._synchronize(ser, timeout=sync_timeout):
-            self._last_error = "無法同步到封包標記"
+            if block and sync_timeout > 0:
+                self._last_error = "無法同步到封包標記 (超時)"
+            else:
+                self._last_error = "無法同步到封包標記"
             return None
 
-        # 讀取封包剩餘內容的超時應較短，因為大部分時間花在等待標記上
-        line_timeout = timeout if timeout is not None else (0.1 if block else 0)
+        # After sync, the rest of the line should arrive quickly. Use a short timeout.
+        line_timeout = 0.2 if block else 0
         line = self._read_line(ser, block=block, timeout=line_timeout)
         if line is None:
-            # 如果是因超時而失敗，則不顯示 "未收到資料"
-            if not block or (line_timeout and line_timeout > 0):
-                 self._last_error = "同步後讀取資料超時"
+            if block and line_timeout > 0:
+                self._last_error = "同步後讀取資料超時"
             else:
-                self._last_error = None
+                self._last_error = None if not block else "未收到任何資料"
             return None
 
         try:
@@ -263,38 +267,54 @@ class FrameProtocol:
         )
         return Frame(payload=payload, stats=stats)
 
-    def _synchronize(self, ser: SerialLike) -> bool:
-        """Search for the sync marker in the input buffer."""
+    def _synchronize(self, ser: SerialLike, timeout: Optional[float] = None) -> bool:
+        """Search for the sync marker in the input buffer with a timeout."""
         marker_len = len(SYNC_MARKER)
         search_buffer = bytearray()
-        
-        # 結合上次遺留的資料和新的讀取
+        start_time = time.monotonic()
+
         if self._pending_ascii:
             search_buffer.extend(self._pending_ascii)
             self._pending_ascii.clear()
 
         while True:
-            # 在現有緩衝區中尋找標記
+            if timeout is not None and (time.monotonic() - start_time) > timeout:
+                self._pending_ascii.extend(search_buffer) # Keep unprocessed data
+                return False
+
             idx = search_buffer.find(SYNC_MARKER)
             if idx != -1:
-                # 找到了，將標記之後的資料放回 pending，準備給 _read_line 使用
                 self._pending_ascii.extend(search_buffer[idx + marker_len:])
                 return True
 
-            # 如果緩衝區不夠長，從序列埠讀取更多資料
-            bytes_to_read = max(1, self.chunk_size)
-            new_data = ser.read(bytes_to_read)
-            if not new_data:
-                # 如果沒有新資料可讀，同步失敗
-                self._pending_ascii.extend(search_buffer) # 保留未處理的資料
-                return False
+            # Determine how many bytes to read
+            # Set a non-blocking read if timeout is 0
+            original_timeout = getattr(ser, 'timeout', None)
+            read_timeout = 0 if timeout == 0 else 0.01 # Short poll
+            if getattr(ser, 'timeout', -1) != read_timeout:
+                try:
+                    ser.timeout = read_timeout
+                except AttributeError:
+                    pass # Not all serial-like objects have a timeout setter
+
+            new_data = ser.read(self.chunk_size)
             
+            # Restore original timeout if we changed it
+            if original_timeout is not None and getattr(ser, 'timeout', -1) != original_timeout:
+                 try:
+                    ser.timeout = original_timeout
+                 except AttributeError:
+                    pass
+
+            if not new_data:
+                if timeout == 0: # Non-blocking, no data is not an error
+                    self._pending_ascii.extend(search_buffer)
+                    return False
+                continue # Poll again
+
             search_buffer.extend(new_data)
 
-            # 避免緩衝區無限增長
             if len(search_buffer) > self.max_encoded_size * 2:
-                # 如果緩衝區過大仍未找到標記，可能已嚴重失步
-                # 丟棄舊資料，只保留最後一部分以尋找跨越邊界的標記
                 search_buffer = search_buffer[-marker_len:]
 
     def _wait_for_ack(self, ser: SerialLike) -> bool:
@@ -316,32 +336,48 @@ class FrameProtocol:
                 continue
             time.sleep(0.001)
 
-    def _read_line(self, ser: SerialLike, *, block: bool) -> Optional[bytes]:
-        bytes_since_ack = 0
+    def _read_line(self, ser: SerialLike, *, block: bool = True, timeout: Optional[float] = None) -> Optional[bytes]:
+        """
+        Read from the serial port until a line terminator is found or timeout.
+        Handles a persistent buffer (_pending_ascii).
+        """
+        start_time = time.monotonic()
+        
         while True:
-            newline_index = self._pending_ascii.find(b"\n")
-            if newline_index != -1:
-                line = bytes(self._pending_ascii[:newline_index + 1])
-                del self._pending_ascii[:newline_index + 1]
-                if self.use_chunk_ack and bytes_since_ack > 0:
-                    ser.write(ACK_MESSAGE)
-                    ser.flush()
-                    bytes_since_ack = 0
-                return line
-            chunk = ser.read(1)
-            if chunk:
-                self._pending_ascii.extend(chunk)
-                if self.use_chunk_ack:
-                    bytes_since_ack += 1
-                    if bytes_since_ack >= self.chunk_size:
-                        ser.write(ACK_MESSAGE)
-                        ser.flush()
-                        bytes_since_ack = 0
-                if len(self._pending_ascii) > self.max_encoded_size + 64:
-                    self._last_error = "資料行過長"
-                    self._pending_ascii.clear()
-                    return None
-                continue
+            # Check for timeout
+            if timeout is not None and (time.monotonic() - start_time) > timeout:
+                return None # Timeout occurred
+
+            # Check for line terminator in the existing buffer
+            if b'\n' in self._pending_ascii:
+                line, self._pending_ascii = self._pending_ascii.split(b'\n', 1)
+                return line + b'\n'
+
+            # If non-blocking and no full line, return immediately
             if not block:
                 return None
-            time.sleep(0.001)
+
+            # Read more data from serial
+            # Set a non-blocking read if timeout is 0
+            original_timeout = getattr(ser, 'timeout', None)
+            read_timeout = 0 if timeout == 0 else 0.01 # Short poll
+            if getattr(ser, 'timeout', -1) != read_timeout:
+                try:
+                    ser.timeout = read_timeout
+                except AttributeError:
+                    pass
+
+            new_data = ser.read(self.chunk_size)
+
+            # Restore original timeout
+            if original_timeout is not None and getattr(ser, 'timeout', -1) != original_timeout:
+                 try:
+                    ser.timeout = original_timeout
+                 except AttributeError:
+                    pass
+
+            if new_data:
+                self._pending_ascii.extend(new_data)
+            elif timeout is None:
+                # In true blocking mode (timeout=None), no data might mean closed port
+                return None
