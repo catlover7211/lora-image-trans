@@ -892,7 +892,7 @@ class CSDecoder:
         header = data[:self.HEADER_STRUCT.size]
         version, width, height, num_measurements, seed_high, seed_low = self.HEADER_STRUCT.unpack(header)
         
-        if version != CSEncoder.VERSION:
+        if version != CSEncoder.VERSION and version != 0:
             raise RuntimeError(f"CS 版本不支援: {version}")
         
         # Reconstruct seed
