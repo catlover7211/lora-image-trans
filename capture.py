@@ -343,7 +343,7 @@ def main() -> None:
     sender_thread = threading.Thread(target=sender_worker, name='LoRaSender', daemon=True)
     sender_thread.start()
 
-    print(f'串流 ACK 模式: {"啟用" if transmitter_config.use_ack else "停用"}')
+    print(f'串流 ACK 模式: {"啟用" if protocol.use_ack else "停用"}')
     print('攝影機已啟動，開始擷取與傳送影像...')
     print("按下 'q' 鍵或 Ctrl+C 停止程式。")
 

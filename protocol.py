@@ -203,6 +203,14 @@ class FrameProtocol:
         return stats
 
     @property
+    def use_ack(self) -> bool:
+        """Return whether ACK mode is enabled.
+        
+        The ESP32 firmware does not support ACK mode, so this always returns False.
+        """
+        return False
+
+    @property
     def last_error(self) -> Optional[str]:
         """Return the most recent receive error, if any."""
         return self._last_error
