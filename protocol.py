@@ -16,6 +16,7 @@ import serial  # type: ignore
 # ---------------------------------------------------------------------------
 BAUD_RATE = 115_200
 FRAME_PREFIX = "FRAME"
+SYNC_MARKER = b"\xDE\xAD\xBE\xEF"  # 新增同步標記
 FIELD_SEPARATOR = " "
 LINE_TERMINATOR = "\n"
 DEFAULT_CHUNK_SIZE = 220
@@ -124,7 +125,8 @@ class FrameProtocol:
             (FRAME_PREFIX, str(len(encoded)), f"{crc:08x}")
         )
         frame_str = header + FIELD_SEPARATOR + encoded + LINE_TERMINATOR
-        frame_bytes = frame_str.encode("ascii")
+        # 在整個封包前加上同步標記
+        frame_bytes = SYNC_MARKER + frame_str.encode("ascii")
         stats = FrameStats(payload_size=len(payload), stuffed_size=len(encoded), crc=crc)
         return frame_bytes, stats
 
@@ -165,6 +167,10 @@ class FrameProtocol:
     # -------------------------- Decoding helpers --------------------------
     def receive_frame(self, ser: SerialLike, *, block: bool = True) -> Optional[Frame]:
         """Attempt to read and validate a single ASCII framed payload from *ser*."""
+        if not self._synchronize(ser):
+            self._last_error = "無法同步到封包標記"
+            return None
+
         line = self._read_line(ser, block=block)
         if line is None:
             self._last_error = None if not block else "未收到任何資料"
@@ -222,7 +228,7 @@ class FrameProtocol:
             encoded = encoded[:encoded_length]
             self._last_error = f"長度不符，宣告 {encoded_length} 實際 {len(encoded)} (已修正)"
         else:
-            self._last_error = None # 清除舊的長度錯誤訊息
+            self._last_error = None  # 成功解析，清除舊錯誤
 
         if encoded_length > self.max_encoded_size:
             self._last_error = "編碼資料超過上限"
@@ -240,36 +246,58 @@ class FrameProtocol:
             self._last_error = "Base64 解碼失敗"
             return None
 
-        if not payload:
-            self._last_error = "解碼後為空資料"
+        actual_crc = zlib.crc32(payload) & 0xFFFFFFFF
+        if actual_crc != expected_crc:
+            self._last_error = f"CRC 校驗失敗 (預期 {expected_crc:08x}, 實際 {actual_crc:08x})"
             return None
-
-        if len(payload) > self.max_payload_size:
-            self._last_error = "解碼資料超過大小限制"
-            return None
-
-        crc = zlib.crc32(payload) & 0xFFFFFFFF
-        if crc != expected_crc:
-            msg = "CRC 驗證失敗"
-            if not self._lenient:
-                self._last_error = msg
-                return None
-            self._last_error = msg + " (lenient: 忽略驗證)"
 
         stats = FrameStats(
-            payload_size=len(payload),
-            stuffed_size=len(encoded),
-            crc=crc,
+            payload_size=len(payload), stuffed_size=len(encoded), crc=expected_crc
         )
-        self._last_error = None
         return Frame(payload=payload, stats=stats)
 
-    # -------------------------- Internal helpers --------------------------
+    def _synchronize(self, ser: SerialLike) -> bool:
+        """Search for the sync marker in the input buffer."""
+        marker_len = len(SYNC_MARKER)
+        search_buffer = bytearray()
+        
+        # 結合上次遺留的資料和新的讀取
+        if self._pending_ascii:
+            search_buffer.extend(self._pending_ascii)
+            self._pending_ascii.clear()
+
+        while True:
+            # 在現有緩衝區中尋找標記
+            idx = search_buffer.find(SYNC_MARKER)
+            if idx != -1:
+                # 找到了，將標記之後的資料放回 pending，準備給 _read_line 使用
+                self._pending_ascii.extend(search_buffer[idx + marker_len:])
+                return True
+
+            # 如果緩衝區不夠長，從序列埠讀取更多資料
+            bytes_to_read = max(1, self.chunk_size)
+            new_data = ser.read(bytes_to_read)
+            if not new_data:
+                # 如果沒有新資料可讀，同步失敗
+                self._pending_ascii.extend(search_buffer) # 保留未處理的資料
+                return False
+            
+            search_buffer.extend(new_data)
+
+            # 避免緩衝區無限增長
+            if len(search_buffer) > self.max_encoded_size * 2:
+                # 如果緩衝區過大仍未找到標記，可能已嚴重失步
+                # 丟棄舊資料，只保留最後一部分以尋找跨越邊界的標記
+                search_buffer = search_buffer[-marker_len:]
+
     def _wait_for_ack(self, ser: SerialLike) -> bool:
-        deadline = time.monotonic() + self.ack_timeout if self.ack_timeout > 0 else None
+        """Wait for an ACK message from the remote."""
+        if self.ack_timeout <= 0:
+            return True
+        deadline = time.monotonic() + self.ack_timeout
         buffer = bytearray()
         while True:
-            if deadline is not None and time.monotonic() > deadline:
+            if time.monotonic() > deadline:
                 return False
             chunk = ser.read(1)
             if chunk:
