@@ -267,6 +267,10 @@ def _main_processing_loop(
         try:
             chunk, stats = frame_queue.get(timeout=0.2)
         except queue.Empty:
+            # Keep window responsive even when no frames are available
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                stop_event.set()
+                break
             continue
 
         try:
@@ -277,11 +281,19 @@ def _main_processing_loop(
             frame_queue.task_done()
 
         if not decoded_frames:
+            # Keep window responsive even when decoding produces no frames
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                stop_event.set()
+                break
             continue
 
         image = decoded_frames[-1]
         if image is None:
             print("錯誤: 無法解碼影像。資料可能已損毀。")
+            # Keep window responsive even when decoding fails
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                stop_event.set()
+                break
             continue
 
         pending_stats, pending_fragments = display_frame(
