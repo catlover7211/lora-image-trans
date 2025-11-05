@@ -1,89 +1,224 @@
-# 影像串流範例
+# LoRa 影像傳輸系統
 
-此專案示範如何透過序列埠在電腦與微控制器（如 Arduino/ESP32）之間傳送影像幀。
+## 系統架構
+
+```
+樹莓派 (Raspberry Pi) → ESP32 → LoRa → LoRa → ESP32 → 電腦 (PC)
+    [發送端]              [中繼]  [無線]  [中繼]     [接收端]
+```
 
 ## 專案結構
 
-- `capture.py`：發送端。擷取攝影機影像、以 H.264/H.265/AV1/JPEG/Contour/YOLO 或自訂 Wavelet 編碼並透過自訂幀協定傳送。
-- `main.py`：接收端。從序列埠讀取幀資料、驗證 CRC32、解碼 H.264/H.265/AV1/JPEG/Wavelet/Contour 與 YOLO 偵測框並顯示畫面。
-- `protocol.py`：共享的幀協定工具，負責 ASCII 封包、CRC 驗證、分段 ACK 與降級處理。
-- `h264_codec.py`：封裝 PyAV 的 H.264/H.265/AV1 編碼與解碼流程，並提供 JPEG、Contour、YOLO 偵測與自訂 Wavelet 編解碼器。
-- `image_settings.py`：集中管理影像尺寸、位元率、關鍵幀與動態偵測等調校參數，修改此檔即可快速調整影像品質。
-- `tests/test_protocol.py`：簡單的單元測試，確保幀協定的基本行為正確。
+```
+├── common/                      # 共用模組
+│   ├── config.py               # 設定參數
+│   └── protocol.py             # 通訊協定
+│
+├── raspberry_pi/               # Raspberry Pi 發送端
+│   ├── sender.py               # 主程式
+│   ├── camera_capture.py       # 攝影機擷取
+│   ├── jpeg_encoder.py         # JPEG 編碼器
+│   ├── cs_encoder.py           # 壓縮感知編碼器
+│   └── serial_comm.py          # 串列通訊
+│
+├── pc/                         # PC 接收端
+│   ├── receiver.py             # 主程式
+│   ├── jpeg_decoder.py         # JPEG 解碼器
+│   ├── cs_decoder.py           # 壓縮感知解碼器
+│   └── serial_comm.py          # 串列通訊
+│
+└── arduino/                    # ESP32 Arduino 程式
+    ├── esp32_sender/           # 發送端中繼器
+    │   └── esp32_sender.ino
+    └── esp32_receiver/         # 接收端中繼器
+        └── esp32_receiver.ino
+```
 
-## 需求
+## 功能特點
 
-- Python 3.10+
-- OpenCV (`opencv-python`)
-- PySerial (`pyserial`)
-- NumPy (`numpy`)
-- PyAV (`av`) — 需系統已安裝 FFmpeg 及 libx264 / libx265 / libaom-av1
+### 編碼方式
 
-可使用 `pip` 安裝：
+1. **JPEG 編碼**
+   - 標準 JPEG 壓縮
+   - 可調整品質 (1-100)
+   - 相容性高
+   - 適合彩色影像
+
+2. **壓縮感知 (CS) 編碼**
+   - 基於 DCT 的區塊壓縮感知
+   - 採樣率可調整 (0.0-1.0)
+   - 資料量更小
+   - 適合灰階影像
+
+### 通訊協定
+
+幀格式：`START|TYPE|LENGTH|DATA|CRC|END`
+
+- **START**: 起始標記 (0xAA 0x55)
+- **TYPE**: 資料類型 (0x01=JPEG, 0x02=CS)
+- **LENGTH**: 資料長度 (2 bytes, big-endian)
+- **DATA**: 影像資料
+- **CRC**: CRC16 校驗碼 (2 bytes, big-endian)
+- **END**: 結束標記 (0x55 0xAA)
+
+## 硬體需求
+
+### Raspberry Pi 端
+- Raspberry Pi (任何型號，建議 3B+ 或更新)
+- USB 攝影機或 Pi Camera
+- USB 轉串列模組 (連接 ESP32)
+
+### ESP32 中繼器
+- ESP32 開發板 × 2
+- ATK-LORA-01 或相容的 LoRa 模組 × 2
+- 連接線
+
+**ESP32 接線：**
+- GPIO16 (RX2) → LoRa TX
+- GPIO17 (TX2) → LoRa RX
+- GND → LoRa GND
+- 3.3V/5V → LoRa VCC (依模組規格)
+
+### PC 端
+- 電腦 (Windows/Linux/macOS)
+- USB 轉串列模組 (連接 ESP32)
+- Python 3.8+
+
+## 軟體需求
+
+### Raspberry Pi / PC
 
 ```bash
-python -m pip install opencv-python numpy pyserial av
+pip install numpy opencv-python pyserial
 ```
+
+### Arduino IDE
+
+1. 安裝 ESP32 開發板支援
+2. 選擇開發板：ESP32 Dev Module
+3. 設定上傳速度：115200
 
 ## 使用方式
 
-1. **啟動接收端**（建議先啟動）：
-   ```bash
-   python main.py
-   ```
-2. **啟動發送端**：
-   ```bash
-   python capture.py
-   ```
+### 1. 設定 ESP32 中繼器
 
-   常用參數：
+**發送端 ESP32：**
+```bash
+# 使用 Arduino IDE 上傳 arduino/esp32_sender/esp32_sender.ino
+# 連接：Raspberry Pi USB ↔ ESP32 USB
+#       ESP32 UART2 ↔ LoRa 模組
+```
 
-   - `--codec`：選擇 `h264` / `h265` / `av1` / `jpeg` / `wavelet` / `contour` / `yolo`；H.265、AV1 與 Wavelet 壓縮率較佳，JPEG 兼具高相容性，Contour 會以傅立葉係數傳輸物件輪廓，YOLO 只傳送人臉框的相對位置。
-   - `--bitrate`：調整目標位元率，降低可節省頻寬。
-   - `--keyframe-interval`：設定關鍵幀間隔，數值越大表示較少完整畫面。
-   - `--motion-threshold`：畫面變化門檻，變化低於此值時跳過傳送。
-   - `--max-idle`：最多可允許多久不傳送，超過則強制送一幀以維持同步。
-   - `--jpeg-quality`：當選擇 `jpeg` 編碼時控制壓縮品質（1-100）。
-   - `--contour-samples`：Contour 模式下的 r(θ) 採樣點數（愈高越精細，資料量也增）。
-   - `--contour-coeffs`：Contour 模式下保留的傅立葉係數數量（愈高輪廓越準確）。
-   - `--yolo-weights`：YOLOv5 權重檔（或模型名稱），例如 `yolov5n-face.pt`。
-   - `--yolo-conf` / `--yolo-iou`：YOLOv5 偵測信心與 NMS IoU 門檻。
-   - `--yolo-device`：YOLOv5 推論裝置（如 `cpu` 或 `cuda:0`）。
-   - `--yolo-max-det`：單張影像保留的最大偵測框數。
+**接收端 ESP32：**
+```bash
+# 使用 Arduino IDE 上傳 arduino/esp32_receiver/esp32_receiver.ino
+# 連接：LoRa 模組 ↔ ESP32 UART2
+#       ESP32 USB ↔ PC USB
+```
 
-按下 `q` 或 `Ctrl+C` 可結束程式。
-
-## 單元測試
-
-執行內建的協定測試：
+### 2. 啟動接收端 (PC)
 
 ```bash
-python -m unittest tests/test_protocol.py
+cd pc
+python receiver.py [--port /dev/ttyUSB0]
 ```
 
-## 注意事項
+**參數：**
+- `--port`: 指定串列埠（可選，會自動偵測）
 
-- 預設會自動偵測第一個可用的序列埠。若環境中有多個裝置，可依需求調整 `protocol.auto_detect_serial_port`。
-- 影像預設縮放後以 H.265 編碼（可改為 H.264、AV1、JPEG、Contour、YOLO 或 Wavelet），利用差分幀減少資料量並定期插入 I-frame 以保持同步。
-- 若欲使用 YOLO 模式，請先準備對應的權重檔並安裝 `torch` 及 YOLOv5 依賴（程式會透過 `torch.hub` 載入）。
-- 若系統未安裝 libx265 / libaom-av1 或裝置效能不足，可在啟動發送端時加入 `--codec h264` 改回 H.264 以維持相容性。
-- 協定採用 ASCII 框架與 CRC32 校驗，並支援逐段 ACK（初始階段可自動降級為無 ACK 模式，以防止接收端尚未就緒時阻塞）。
+### 3. 啟動發送端 (Raspberry Pi)
 
-## 程式流程圖
-```mermaid
-flowchart TD
-    A[開始] --> B[初始化序列埠與顯示視窗];
-    B --> C{主迴圈};
-    C --> D["<b>處理接收 (protocol.receive_frame)</b><br/>1. 從序列埠讀取一行資料<br/>2. 驗證標頭與長度<br/>3. Base64 解碼<br/>4. 驗證 CRC 校驗碼"];
-    D --> E{是否成功收到有效 Frame?};
-    E -- "否" --> C;
-    E -- "是" --> F[取得還原後的 Payload];
-    F --> G[使用對應的解碼器還原影像];
-    G --> H[在視窗中顯示還原後的影像];
-    H --> I{使用者是否按下 'q' 結束?};
-    I -- "否" --> C;
-    I -- "是" --> J[關閉序列埠與視窗];
-    J --> K[結束];
-
-    style D fill:#ccf,stroke:#333,stroke-width:2px
+**JPEG 模式：**
+```bash
+cd raspberry_pi
+python sender.py --codec jpeg --jpeg-quality 85 --fps 10 [--preview]
 ```
+
+**壓縮感知 (CS) 模式：**
+```bash
+cd raspberry_pi
+python sender.py --codec cs --cs-rate 0.3 --fps 10 [--preview]
+```
+
+**參數：**
+- `--port`: 指定串列埠（可選）
+- `--camera`: 攝影機索引（預設：0）
+- `--width`: 影像寬度（預設：320）
+- `--height`: 影像高度（預設：240）
+- `--codec`: 編碼方式 `jpeg` 或 `cs`（預設：jpeg）
+- `--jpeg-quality`: JPEG 品質 1-100（預設：85）
+- `--cs-rate`: CS 採樣率 0.0-1.0（預設：0.3）
+- `--cs-block`: CS 區塊大小（預設：8）
+- `--fps`: 目標 FPS（預設：10）
+- `--preview`: 顯示預覽視窗
+
+## 設定調整
+
+在 `common/config.py` 中可調整：
+
+```python
+# 串列通訊設定
+BAUD_RATE = 115200          # 波特率
+SERIAL_TIMEOUT = 1.0        # 逾時時間
+
+# 影像設定
+DEFAULT_WIDTH = 320         # 預設寬度
+DEFAULT_HEIGHT = 240        # 預設高度
+DEFAULT_JPEG_QUALITY = 85   # JPEG 品質
+
+# 壓縮感知設定
+CS_MEASUREMENT_RATE = 0.3   # CS 採樣率
+CS_BLOCK_SIZE = 8           # CS 區塊大小
+
+# 緩衝設定
+MAX_FRAME_SIZE = 65535      # 最大幀大小
+CHUNK_SIZE = 240            # LoRa 傳輸區塊大小
+```
+
+## 效能調校
+
+### 增加傳輸速度
+1. 降低解析度：`--width 160 --height 120`
+2. 降低 JPEG 品質：`--jpeg-quality 70`
+3. 使用 CS 編碼並降低採樣率：`--codec cs --cs-rate 0.2`
+4. 提高 FPS：`--fps 15`
+
+### 改善影像品質
+1. 提高解析度：`--width 640 --height 480`
+2. 提高 JPEG 品質：`--jpeg-quality 95`
+3. 提高 CS 採樣率：`--cs-rate 0.5`
+4. 降低 FPS：`--fps 5`
+
+## 故障排除
+
+### 無法找到串列埠
+```bash
+# Linux
+ls /dev/ttyUSB* /dev/ttyACM*
+
+# 檢查權限
+sudo chmod 666 /dev/ttyUSB0
+
+# 或加入使用者到 dialout 群組
+sudo usermod -a -G dialout $USER
+```
+
+### 影像傳輸延遲
+1. 降低解析度
+2. 降低品質或採樣率
+3. 確認 LoRa 模組設定（頻寬、擴頻因子）
+4. 檢查串列埠緩衝區大小
+
+### CRC 錯誤
+1. 檢查接線是否正確
+2. 降低傳輸速度
+3. 縮短 LoRa 傳輸距離
+4. 檢查電源供應是否穩定
+
+## 授權
+
+本專案採用 MIT 授權條款。
+
+## 貢獻
+
+歡迎提交 Issue 和 Pull Request。
