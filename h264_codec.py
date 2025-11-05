@@ -6,6 +6,8 @@ from fractions import Fraction
 from typing import Any, Iterable, List, Literal, Optional, Tuple
 import struct
 import zlib
+from scipy.fftpack import dct, idct
+from sklearn.linear_model import OrthogonalMatchingPursuit
 
 import av  # type: ignore
 import cv2
@@ -725,81 +727,67 @@ class WaveletDecoder:
 
 
 class CSEncoder:
-    """Compressed Sensing encoder using random Gaussian measurement matrix with DCT sparsifying basis."""
+    """
+    Compressed Sensing encoder using a random Gaussian measurement matrix
+    on the DCT coefficients of the image.
+    """
 
-    VERSION = 1
+    VERSION = 2  # Bump version due to fundamental change in algorithm
     HEADER_STRUCT = struct.Struct("<BHHHHH")  # version, width, height, measurements, seed_high, seed_low
 
     def __init__(
-        self, 
-        width: int, 
-        height: int, 
-        *, 
+        self,
+        width: int,
+        height: int,
+        *,
         measurement_ratio: float = 0.3,
         seed: Optional[int] = None
     ) -> None:
-        """
-        Initialize CS encoder.
-        
-        Args:
-            width: Image width
-            height: Image height
-            measurement_ratio: Ratio of measurements to original signal size (0 < ratio < 1)
-            seed: Random seed for measurement matrix generation (for reproducibility)
-        """
         if width <= 0 or height <= 0:
             raise ValueError("影像尺寸必須為正整數")
         if not (0 < measurement_ratio < 1):
             raise ValueError("測量比率必須介於 0 和 1 之間")
-        
+
         self.width = width
         self.height = height
         self.measurement_ratio = measurement_ratio
-        
-        # Use provided seed or generate a random one
+
         if seed is None:
             self.seed = np.random.randint(0, 2**32 - 1)
         else:
             self.seed = seed % (2**32)
-        
-        # Calculate number of measurements per channel
+
         signal_length = width * height
         self.num_measurements = max(1, int(signal_length * measurement_ratio))
-        
-        # Generate measurement matrix (will be regenerated with same seed for decoding)
+
         rng = np.random.RandomState(self.seed)
         self.measurement_matrix = rng.randn(self.num_measurements, signal_length).astype(np.float32)
-        # Normalize rows
-        row_norms = np.linalg.norm(self.measurement_matrix, axis=1, keepdims=True)
-        self.measurement_matrix /= (row_norms + 1e-8)
+        self.measurement_matrix /= np.linalg.norm(self.measurement_matrix, axis=1, keepdims=True)
+
+    @staticmethod
+    def _dct2(block: np.ndarray) -> np.ndarray:
+        """2D DCT transform."""
+        return dct(dct(block.T, norm='ortho').T, norm='ortho')
 
     def encode(self, frame_bgr: np.ndarray) -> List[EncodedChunk]:
-        """Encode a BGR frame using compressed sensing."""
         if frame_bgr.shape[0] != self.height or frame_bgr.shape[1] != self.width:
             raise ValueError("輸入影像尺寸與編碼器不符")
-        if frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3:
-            raise ValueError("輸入影像需為 BGR 三通道格式")
 
-        # Process each channel separately
         measurements_list = []
         for c in range(3):
             channel = frame_bgr[:, :, c].astype(np.float32)
-            # Flatten channel
-            signal = channel.flatten()
-            # Apply measurement matrix: y = Φx
-            measurements = self.measurement_matrix @ signal
+            # Apply 2D DCT to make the signal sparse
+            dct_coeffs = self._dct2(channel)
+            # Flatten to a vector
+            dct_vector = dct_coeffs.flatten()
+            # Take measurements
+            measurements = self.measurement_matrix @ dct_vector
             measurements_list.append(measurements)
 
-        # Stack measurements for all channels
-        all_measurements = np.stack(measurements_list, axis=0)  # Shape: (3, num_measurements)
-        
-        # Quantize to int16 for compression
-        quantized = np.clip(all_measurements, -32768, 32767).astype(np.int16)
-        
-        # Compress the measurements
+        all_measurements = np.stack(measurements_list, axis=0)
+        quantized = np.clip(all_measurements, -32767, 32767).astype(np.int16)
         payload_body = zlib.compress(quantized.tobytes(), level=6)
-        
-        # Pack header: version, width, height, num_measurements, seed (split into 2 uint16)
+
         seed_high = (self.seed >> 16) & 0xFFFF
         seed_low = self.seed & 0xFFFF
         header = self.HEADER_STRUCT.pack(
@@ -810,7 +798,7 @@ class CSEncoder:
             seed_high,
             seed_low,
         )
-        
+
         chunk = EncodedChunk(
             data=header + payload_body,
             codec="cs",
@@ -820,121 +808,85 @@ class CSEncoder:
         return [chunk]
 
     def force_keyframe(self) -> None:
-        # All frames are intra-only; nothing to do.
         return
 
     def force_config_repeat(self, count: int = 3) -> None:
-        # CS 編碼為每幀獨立，不需要額外的設定封包。
         return
 
 
 class CSDecoder:
-    """Compressed Sensing decoder using regularized least-squares reconstruction."""
+    """
+    Compressed Sensing decoder using Orthogonal Matching Pursuit (OMP)
+    to reconstruct the sparse DCT coefficients.
+    """
 
     HEADER_STRUCT = CSEncoder.HEADER_STRUCT
 
-    def __init__(self, regularization: float = 0.01):
+    def __init__(self, n_nonzero_coeffs: Optional[int] = None):
         """
-        Initialize CS decoder.
-        
         Args:
-            regularization: Regularization parameter for least-squares (ridge regression)
+            n_nonzero_coeffs: The presumed number of non-zero coefficients in the sparse signal.
+                              If None, it's estimated from the number of measurements.
         """
-        self.regularization = regularization
+        self.n_nonzero_coeffs = n_nonzero_coeffs
 
-    def _reconstruct(
-        self,
-        measurements: np.ndarray,
-        measurement_matrix: np.ndarray,
-    ) -> np.ndarray:
-        """
-        Reconstruct signal using regularized least-squares (ridge regression).
-        
-        Args:
-            measurements: Measurement vector y
-            measurement_matrix: Measurement matrix Φ
-            
-        Returns:
-            Reconstructed signal
-        """
-        m, n = measurement_matrix.shape
-        
-        # Use ridge regression: x = (Φ^T Φ + λI)^(-1) Φ^T y
-        # This is more stable and faster than OMP for this application
-        try:
-            phi_t = measurement_matrix.T
-            phi_t_phi = phi_t @ measurement_matrix
-            
-            # Add regularization to diagonal
-            reg_matrix = phi_t_phi + self.regularization * np.eye(n, dtype=np.float32)
-            
-            # Solve: reg_matrix @ x = Φ^T y
-            phi_t_y = phi_t @ measurements
-            signal = np.linalg.solve(reg_matrix, phi_t_y)
-            
-        except np.linalg.LinAlgError:
-            # Fallback to pseudo-inverse if solve fails
-            try:
-                signal = np.linalg.lstsq(measurement_matrix, measurements, rcond=None)[0]
-            except np.linalg.LinAlgError:
-                # Last resort: return zeros
-                signal = np.zeros(n, dtype=np.float32)
-        
-        return signal
+    @staticmethod
+    def _idct2(coeffs: np.ndarray) -> np.ndarray:
+        """Inverse 2D DCT transform."""
+        return idct(idct(coeffs.T, norm='ortho').T, norm='ortho')
 
     def decode_chunk(self, chunk: EncodedChunk) -> np.ndarray:
-        """Decode a CS chunk back to image."""
         data = chunk.data
         if len(data) <= self.HEADER_STRUCT.size:
             raise RuntimeError("CS 資料長度不正確")
-        
-        # Unpack header
+
         header = data[:self.HEADER_STRUCT.size]
         version, width, height, num_measurements, seed_high, seed_low = self.HEADER_STRUCT.unpack(header)
-        
-        if version != CSEncoder.VERSION and version != 0:
+
+        if version != CSEncoder.VERSION:
+            # Allow legacy version 0 and 1 for compatibility, but they won't work with this logic
+            if version in (0, 1):
+                 raise RuntimeError(f"CS 版本 {version} 已過時，需要版本 {CSEncoder.VERSION}")
             raise RuntimeError(f"CS 版本不支援: {version}")
-        
-        # Reconstruct seed
+
         seed = (seed_high << 16) | seed_low
-        
-        # Decompress measurements
         compressed = data[self.HEADER_STRUCT.size:]
         try:
             decompressed = zlib.decompress(compressed)
         except zlib.error as exc:
             raise RuntimeError(f"CS 解壓失敗: {exc}") from exc
-        
-        # Verify size
+
         expected_bytes = 3 * num_measurements * np.dtype(np.int16).itemsize
         if len(decompressed) != expected_bytes:
-            raise RuntimeError("CS 解壓後長度不符")
-        
-        # Reshape measurements
+            raise RuntimeError(f"CS 解壓後長度不符: 應為 {expected_bytes}, 實際 {len(decompressed)}")
+
         measurements = np.frombuffer(decompressed, dtype=np.int16).reshape((3, num_measurements)).astype(np.float32)
-        
-        # Regenerate measurement matrix with same seed
+
         signal_length = width * height
         rng = np.random.RandomState(seed)
         measurement_matrix = rng.randn(num_measurements, signal_length).astype(np.float32)
-        row_norms = np.linalg.norm(measurement_matrix, axis=1, keepdims=True)
-        measurement_matrix /= (row_norms + 1e-8)
+        measurement_matrix /= np.linalg.norm(measurement_matrix, axis=1, keepdims=True)
+
+        # Configure and create OMP instance
+        if self.n_nonzero_coeffs is None:
+            # Estimate sparsity: a common heuristic is a fraction of the measurements
+            n_nonzero = max(1, int(num_measurements * 0.1))
+        else:
+            n_nonzero = self.n_nonzero_coeffs
+        omp = OrthogonalMatchingPursuit(n_nonzero_coefs=n_nonzero)
         
-        # Reconstruct each channel
         reconstructed_channels = []
         for c in range(3):
-            signal = self._reconstruct(
-                measurements[c],
-                measurement_matrix
-            )
-            channel = signal.reshape((height, width))
-            # Clip to valid range
-            channel = np.clip(channel, 0, 255)
+            omp.fit(measurement_matrix, measurements[c])
+            dct_coeffs_vector = omp.coef_
+            dct_coeffs = dct_coeffs_vector.reshape((height, width))
+            
+            # Apply inverse DCT to get the image back
+            channel = self._idct2(dct_coeffs)
             reconstructed_channels.append(channel)
-        
-        # Stack channels and convert to uint8
-        frame_bgr = np.stack(reconstructed_channels, axis=2).astype(np.uint8)
-        return frame_bgr
+
+        frame_bgr = np.stack(reconstructed_channels, axis=2)
+        return np.clip(frame_bgr, 0, 255).astype(np.uint8)
 
     def decode(self, chunk: EncodedChunk) -> Iterable[np.ndarray]:
         if chunk.is_config:
