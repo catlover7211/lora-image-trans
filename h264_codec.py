@@ -822,18 +822,39 @@ class CSDecoder:
 
     HEADER_STRUCT = CSEncoder.HEADER_STRUCT
 
-    def __init__(self, n_nonzero_coeffs: Optional[int] = None):
+    def __init__(self, n_nonzero_coeffs: Optional[int] = None, regularization: float = 0.01):
         """
         Args:
-            n_nonzero_coeffs: The presumed number of non-zero coefficients in the sparse signal.
-                              If None, it's estimated from the number of measurements.
+            n_nonzero_coeffs: For V2, the presumed number of non-zero DCT coefficients.
+            regularization: For V0/V1, the regularization parameter for least-squares.
         """
         self.n_nonzero_coeffs = n_nonzero_coeffs
+        self.regularization = regularization
 
     @staticmethod
     def _idct2(coeffs: np.ndarray) -> np.ndarray:
         """Inverse 2D DCT transform."""
         return idct(idct(coeffs.T, norm='ortho').T, norm='ortho')
+
+    def _reconstruct_legacy(
+        self,
+        measurements: np.ndarray,
+        measurement_matrix: np.ndarray,
+    ) -> np.ndarray:
+        """Reconstruct signal using regularized least-squares (for V0/V1)."""
+        m, n = measurement_matrix.shape
+        try:
+            phi_t = measurement_matrix.T
+            phi_t_phi = phi_t @ measurement_matrix
+            reg_matrix = phi_t_phi + self.regularization * np.eye(n, dtype=np.float32)
+            phi_t_y = phi_t @ measurements
+            signal = np.linalg.solve(reg_matrix, phi_t_y)
+        except np.linalg.LinAlgError:
+            try:
+                signal = np.linalg.lstsq(measurement_matrix, measurements, rcond=None)[0]
+            except np.linalg.LinAlgError:
+                signal = np.zeros(n, dtype=np.float32)
+        return signal
 
     def decode_chunk(self, chunk: EncodedChunk) -> np.ndarray:
         data = chunk.data
@@ -843,22 +864,60 @@ class CSDecoder:
         header = data[:self.HEADER_STRUCT.size]
         version, width, height, num_measurements, seed_high, seed_low = self.HEADER_STRUCT.unpack(header)
 
-        if version != CSEncoder.VERSION:
-            # Allow legacy version 0 and 1 for compatibility, but they won't work with this logic
-            if version in (0, 1):
-                 raise RuntimeError(f"CS 版本 {version} 已過時，需要版本 {CSEncoder.VERSION}")
-            raise RuntimeError(f"CS 版本不支援: {version}")
+        # --- Version dispatch ---
+        if version == 2:
+            return self._decode_v2(data)
+        if version in (0, 1):
+            return self._decode_legacy(data)
+        
+        raise RuntimeError(f"CS 版本不支援: {version}")
 
+    def _decode_legacy(self, data: bytes) -> np.ndarray:
+        """Decoder for legacy versions 0 and 1."""
+        _ver, width, height, num_measurements, seed_high, seed_low = self.HEADER_STRUCT.unpack_from(data)
         seed = (seed_high << 16) | seed_low
+
         compressed = data[self.HEADER_STRUCT.size:]
         try:
             decompressed = zlib.decompress(compressed)
         except zlib.error as exc:
-            raise RuntimeError(f"CS 解壓失敗: {exc}") from exc
+            raise RuntimeError(f"CS (legacy) 解壓失敗: {exc}") from exc
 
         expected_bytes = 3 * num_measurements * np.dtype(np.int16).itemsize
         if len(decompressed) != expected_bytes:
-            raise RuntimeError(f"CS 解壓後長度不符: 應為 {expected_bytes}, 實際 {len(decompressed)}")
+            raise RuntimeError(f"CS (legacy) 解壓後長度不符: 應為 {expected_bytes}, 實際 {len(decompressed)}")
+
+        measurements = np.frombuffer(decompressed, dtype=np.int16).reshape((3, num_measurements)).astype(np.float32)
+
+        signal_length = width * height
+        rng = np.random.RandomState(seed)
+        measurement_matrix = rng.randn(num_measurements, signal_length).astype(np.float32)
+        row_norms = np.linalg.norm(measurement_matrix, axis=1, keepdims=True)
+        measurement_matrix /= (row_norms + 1e-8)
+
+        reconstructed_channels = []
+        for c in range(3):
+            signal = self._reconstruct_legacy(measurements[c], measurement_matrix)
+            channel = signal.reshape((height, width))
+            reconstructed_channels.append(channel)
+        
+        frame_bgr = np.stack(reconstructed_channels, axis=2)
+        return np.clip(frame_bgr, 0, 255).astype(np.uint8)
+
+    def _decode_v2(self, data: bytes) -> np.ndarray:
+        """Decoder for new version 2."""
+        _ver, width, height, num_measurements, seed_high, seed_low = self.HEADER_STRUCT.unpack_from(data)
+        seed = (seed_high << 16) | seed_low
+
+        compressed = data[self.HEADER_STRUCT.size:]
+        try:
+            decompressed = zlib.decompress(compressed)
+        except zlib.error as exc:
+            raise RuntimeError(f"CS (v2) 解壓失敗: {exc}") from exc
+
+        expected_bytes = 3 * num_measurements * np.dtype(np.int16).itemsize
+        if len(decompressed) != expected_bytes:
+            raise RuntimeError(f"CS (v2) 解壓後長度不符: 應為 {expected_bytes}, 實際 {len(decompressed)}")
 
         measurements = np.frombuffer(decompressed, dtype=np.int16).reshape((3, num_measurements)).astype(np.float32)
 
@@ -867,9 +926,7 @@ class CSDecoder:
         measurement_matrix = rng.randn(num_measurements, signal_length).astype(np.float32)
         measurement_matrix /= np.linalg.norm(measurement_matrix, axis=1, keepdims=True)
 
-        # Configure and create OMP instance
         if self.n_nonzero_coeffs is None:
-            # Estimate sparsity: a common heuristic is a fraction of the measurements
             n_nonzero = max(1, int(num_measurements * 0.1))
         else:
             n_nonzero = self.n_nonzero_coeffs
@@ -880,21 +937,11 @@ class CSDecoder:
             omp.fit(measurement_matrix, measurements[c])
             dct_coeffs_vector = omp.coef_
             dct_coeffs = dct_coeffs_vector.reshape((height, width))
-            
-            # Apply inverse DCT to get the image back
             channel = self._idct2(dct_coeffs)
             reconstructed_channels.append(channel)
 
         frame_bgr = np.stack(reconstructed_channels, axis=2)
         return np.clip(frame_bgr, 0, 255).astype(np.uint8)
-
-    def decode(self, chunk: EncodedChunk) -> Iterable[np.ndarray]:
-        if chunk.is_config:
-            return []
-        return [self.decode_chunk(chunk)]
-
-    def flush(self) -> Iterable[np.ndarray]:
-        return []
 
 
 class ContourDecoder:
