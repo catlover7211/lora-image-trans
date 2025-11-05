@@ -46,6 +46,9 @@ DEFAULT_INTER_CHUNK_DELAY = 0  # seconds
 DEFAULT_MAX_PAYLOAD_SIZE = 1920 * 1080  # 128 KB (raw payload)
 """Maximum allowed payload size to prevent memory issues."""
 
+DEFAULT_SYNC_TIMEOUT = 2.0  # seconds
+"""Default timeout for synchronization when blocking."""
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -187,7 +190,7 @@ class FrameProtocol:
     # -------------------------- Decoding helpers --------------------------
     def receive_frame(self, ser: SerialLike, *, block: bool = True, timeout: Optional[float] = None) -> Optional[Frame]:
         """Attempt to read and validate a single ASCII framed payload from *ser*."""
-        sync_timeout = timeout if timeout is not None else (2.0 if block else 0)
+        sync_timeout = timeout if timeout is not None else (DEFAULT_SYNC_TIMEOUT if block else 0)
 
         if not self._synced and not self._synchronize(ser, timeout=sync_timeout):
             self._set_error_if_blocking("無法同步到封包標記 (超時)", block, sync_timeout)

@@ -52,9 +52,11 @@ class FrameProtocolTest(unittest.TestCase):
         self.assertEqual(received.stats.crc, stats.crc)
 
     def test_frame_format_ascii(self) -> None:
+        """Test that frames are properly formatted with sync marker and ASCII encoding."""
         payload = b"hello world"
         self.protocol.send_frame(self.loopback, payload)
-        # Skip sync marker (first 4 bytes)
+        # The buffer now contains: SYNC_MARKER + ASCII frame data
+        # Skip the sync marker (first 4 bytes) to verify the ASCII frame format
         frame_bytes = self.loopback.buffer[len(SYNC_MARKER):]
         frame_line = frame_bytes.decode("ascii")
         self.assertTrue(frame_line.endswith("\n"))
