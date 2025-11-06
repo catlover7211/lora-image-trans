@@ -20,8 +20,9 @@ CS_MEASUREMENT_RATE = 0.01  # 1% sampling rate
 CS_BLOCK_SIZE = 16  # 16x16 pixel blocks
 
 # Buffer settings
-MAX_FRAME_SIZE = 700000  # Maximum 2^16-1 bytes per frame
-CHUNK_SIZE = 5000  # Bytes per chunk for LoRa transmission
+# Protocol LENGTH field is 2 bytes (uint16), so max payload is 65535 bytes.
+MAX_FRAME_SIZE = 65535
+CHUNK_SIZE = 500  # Bytes per chunk for LoRa transmission
 
 # Flow control settings
 INTER_FRAME_DELAY = 0.005  # Delay between frames in seconds (5ms) to prevent receiver buffer overflow

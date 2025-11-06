@@ -23,9 +23,47 @@ from common.config import (
     DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_JPEG_QUALITY,
     WINDOW_TITLE_SENDER, WINDOW_TITLE_PHOTO_SENDER,
     CS_MEASUREMENT_RATE, CS_BLOCK_SIZE,
-    INTER_FRAME_DELAY,
+    INTER_FRAME_DELAY, MAX_FRAME_SIZE,
     MODE_CCTV, MODE_PHOTO, PHOTO_WIDTH, PHOTO_HEIGHT, PHOTO_JPEG_QUALITY
 )
+
+def _encode_jpeg_with_limit(encoder: JPEGEncoder, image, max_size: int, min_quality: int = 30):
+    """Encode JPEG ensuring size <= max_size by reducing quality and then downscaling if needed.
+
+    Returns bytes on success or None on failure.
+    """
+    try:
+        base_quality = encoder.quality
+        working = image
+        quality = base_quality
+        last_data = None
+
+        while True:
+            q = quality
+            while q >= min_quality:
+                encoder.set_quality(q)
+                data = encoder.encode(working)
+                if data is None:
+                    return None
+                last_data = data
+                if len(data) <= max_size:
+                    encoder.set_quality(base_quality)
+                    return data
+                q -= 5
+
+            # Downscale by 10% and retry
+            h, w = working.shape[:2]
+            new_w = int(w * 0.9)
+            new_h = int(h * 0.9)
+            if new_w < 80 or new_h < 60:
+                # Too small, give up and return last attempt
+                encoder.set_quality(base_quality)
+                return last_data
+            working = cv2.resize(working, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            quality = base_quality
+    except Exception as e:
+        print(f"JPEG size limiting error: {e}")
+        return None
 
 
 def parse_args() -> argparse.Namespace:
@@ -170,6 +208,15 @@ def main():
                 print("Error: Failed to encode photo")
                 cleanup_resources(camera, serial_comm, args.preview)
                 return
+            # Ensure JPEG fits protocol limit
+            if frame_type == TYPE_JPEG and len(encoded_data) > MAX_FRAME_SIZE:
+                print(f"Encoded JPEG too large ({len(encoded_data)} bytes). Reducing quality/size to fit {MAX_FRAME_SIZE}...")
+                adjusted = _encode_jpeg_with_limit(encoder, frame, MAX_FRAME_SIZE)
+                if adjusted is None or len(adjusted) > MAX_FRAME_SIZE:
+                    print("Error: Unable to reduce JPEG below protocol size limit")
+                    cleanup_resources(camera, serial_comm, args.preview)
+                    return
+                encoded_data = adjusted
             
             # Build protocol frame
             try:
@@ -234,6 +281,13 @@ def main():
                 error_count += 1
                 print("Warning: Failed to encode frame")
                 continue
+            if frame_type == TYPE_JPEG and len(encoded_data) > MAX_FRAME_SIZE:
+                adjusted = _encode_jpeg_with_limit(encoder, frame, MAX_FRAME_SIZE)
+                if adjusted is None or len(adjusted) > MAX_FRAME_SIZE:
+                    error_count += 1
+                    print("Warning: JPEG exceeds protocol limit and could not be reduced")
+                    continue
+                encoded_data = adjusted
             
             # Build protocol frame
             try:
