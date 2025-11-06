@@ -143,13 +143,14 @@ python sender.py --codec cs --cs-rate 0.3 --fps 10 [--preview]
 **參數：**
 - `--port`: 指定串列埠（可選）
 - `--camera`: 攝影機索引（預設：0）
-- `--width`: 影像寬度（預設：320）
-- `--height`: 影像高度（預設：240）
+- `--width`: 影像寬度（預設：80）
+- `--height`: 影像高度（預設：45）
 - `--codec`: 編碼方式 `jpeg` 或 `cs`（預設：jpeg）
 - `--jpeg-quality`: JPEG 品質 1-100（預設：85）
-- `--cs-rate`: CS 採樣率 0.0-1.0（預設：0.3）
+- `--cs-rate`: CS 採樣率 0.0-1.0（預設：0.05）
 - `--cs-block`: CS 區塊大小（預設：8）
 - `--fps`: 目標 FPS（預設：10）
+- `--inter-frame-delay`: 幀間延遲秒數（預設：0.05），用於防止接收端緩衝溢位
 - `--preview`: 顯示預覽視窗
 
 ## 設定調整
@@ -162,17 +163,20 @@ BAUD_RATE = 115200          # 波特率
 SERIAL_TIMEOUT = 1.0        # 逾時時間
 
 # 影像設定
-DEFAULT_WIDTH = 320         # 預設寬度
-DEFAULT_HEIGHT = 240        # 預設高度
+DEFAULT_WIDTH = 80          # 預設寬度
+DEFAULT_HEIGHT = 45         # 預設高度
 DEFAULT_JPEG_QUALITY = 85   # JPEG 品質
 
 # 壓縮感知設定
-CS_MEASUREMENT_RATE = 0.3   # CS 採樣率
+CS_MEASUREMENT_RATE = 0.05  # CS 採樣率
 CS_BLOCK_SIZE = 8           # CS 區塊大小
 
 # 緩衝設定
 MAX_FRAME_SIZE = 65535      # 最大幀大小
 CHUNK_SIZE = 240            # LoRa 傳輸區塊大小
+
+# 流量控制設定
+INTER_FRAME_DELAY = 0.05    # 幀間延遲（秒），防止接收端緩衝溢位
 ```
 
 ## 效能調校
@@ -227,7 +231,14 @@ sudo usermod -a -G dialout $USER
    - 使用 PC 的大容量記憶體（最高 100KB 緩衝）
    - 能夠處理高速資料流和複雜的幀偵測
 
-3. **效能提升**
+3. **幀間延遲流量控制**
+   - 發送端自動在每個幀之間加入 50ms 延遲（預設）
+   - 防止接收端緩衝區溢位
+   - 可透過 `--inter-frame-delay` 參數調整
+   - 如果接收端出現 "Invalid frame" 警告，可增加延遲：`--inter-frame-delay 0.1`
+   - 如果傳輸速度太慢，可減少延遲：`--inter-frame-delay 0.02`
+
+4. **效能提升**
    - 大幅降低幀丟失率
    - 提高系統可靠性
    - ESP32 記憶體使用量減少 99%
@@ -236,6 +247,7 @@ sudo usermod -a -G dialout $USER
 - LoRa 模組設定是否正確
 - 串列埠連接是否穩定
 - PC 端程式是否正常運作
+- 嘗試增加 `--inter-frame-delay` 參數值
 
 ## 授權
 
