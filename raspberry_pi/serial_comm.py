@@ -1,4 +1,7 @@
-"""Serial communication module for Raspberry Pi sender."""
+"""Serial communication module for Raspberry Pi sender.
+
+Adjustable pacing between chunks and frames to tune throughput vs gap.
+"""
 import time
 from typing import Optional
 
@@ -13,7 +16,8 @@ class SerialComm:
     
     def __init__(self, port: Optional[str] = None, baud_rate: int = BAUD_RATE, 
                  timeout: float = SERIAL_TIMEOUT, chunk_size: int = CHUNK_SIZE,
-                 inter_frame_delay: float = INTER_FRAME_DELAY):
+                 inter_frame_delay: float = INTER_FRAME_DELAY,
+                 chunk_delay_s: float = 0.0):
         """Initialize serial communication.
         
         Args:
@@ -22,6 +26,7 @@ class SerialComm:
             timeout: Read timeout in seconds
             chunk_size: Chunk size for transmission
             inter_frame_delay: Delay between frames in seconds
+            chunk_delay_s: Fixed delay between chunks in seconds (0 for none)
         """
         self.port = port
         self.baud_rate = baud_rate
@@ -29,6 +34,7 @@ class SerialComm:
         self.chunk_size = chunk_size
         self.inter_frame_delay = inter_frame_delay
         self.ser: Optional[serial.Serial] = None
+        self.chunk_delay_s = max(0.0, float(chunk_delay_s))
     
     def find_port(self) -> Optional[str]:
         """Auto-detect available serial port.
@@ -92,10 +98,12 @@ class SerialComm:
             for i in range(0, len(data), self.chunk_size):
                 chunk = data[i:i + self.chunk_size]
                 self.ser.write(chunk)
-                # Use short pacing to avoid overrunning LoRa UART bridge
-                self.ser.flush()
-                if i + self.chunk_size < len(data):
-                    time.sleep(0.003)
+                # Only add optional gap between chunks if configured
+                if i + self.chunk_size < len(data) and self.chunk_delay_s > 0:
+                    time.sleep(self.chunk_delay_s)
+
+            # Ensure all bytes are pushed after the frame
+            self.ser.flush()
             
             # Add inter-frame delay to prevent receiver buffer overflow
             # This delay allows the receiver to process the frame before the next one arrives

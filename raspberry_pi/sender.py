@@ -44,6 +44,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--fps', type=float, default=10.0, help='Target FPS (default: 10.0)')
     parser.add_argument('--inter-frame-delay', type=float, default=INTER_FRAME_DELAY,
                         help=f'Delay between frames in seconds to prevent receiver overflow (default: {INTER_FRAME_DELAY})')
+    parser.add_argument('--chunk-delay-ms', type=float, default=0.0,
+                        help='Delay between chunks in milliseconds (default: 0.0)')
     parser.add_argument('--preview', action='store_true', help='Show preview window')
     return parser.parse_args()
 
@@ -77,7 +79,11 @@ def main():
         print(f"CS Block Size: {args.cs_block}")
     
     # Initialize serial communication
-    serial_comm = SerialComm(port=args.port, inter_frame_delay=args.inter_frame_delay)
+    serial_comm = SerialComm(
+        port=args.port,
+        inter_frame_delay=args.inter_frame_delay,
+        chunk_delay_s=max(0.0, args.chunk_delay_ms / 1000.0)
+    )
     if not serial_comm.open():
         print("Failed to open serial port")
         camera.close()
@@ -87,6 +93,8 @@ def main():
     print("System initialized successfully")
     if args.inter_frame_delay > 0:
         print(f"Inter-frame delay: {args.inter_frame_delay:.3f}s")
+    if args.chunk_delay_ms > 0:
+        print(f"Chunk delay: {args.chunk_delay_ms:.3f}ms")
     print("Press 'q' in preview window or Ctrl+C to quit")
     print("=" * 60)
     
