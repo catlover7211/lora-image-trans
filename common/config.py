@@ -24,7 +24,7 @@ MAX_FRAME_SIZE = 65535  # Maximum 2^16-1 bytes per frame
 CHUNK_SIZE = 500  # Bytes per chunk for LoRa transmission
 
 # Flow control settings
-INTER_FRAME_DELAY = 0.05  # Delay between frames in seconds (50ms) to prevent receiver buffer overflow
+INTER_FRAME_DELAY = 0.005  # Delay between frames in seconds (5ms) to prevent receiver buffer overflow
 
 # Display settings
 WINDOW_TITLE_SENDER = 'CCTV Sender (Press q to quit)'
