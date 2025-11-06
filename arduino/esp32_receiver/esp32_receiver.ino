@@ -32,6 +32,11 @@ uint8_t lora_buffer[LORA_BUFFER_SIZE];
 uint8_t frame_buffer[USB_BUFFER_SIZE];
 size_t frame_buffer_pos = 0;
 
+// Statistics
+unsigned long frames_forwarded = 0;
+unsigned long frames_dropped = 0;
+unsigned long last_stats_time = 0;
+
 // 幀標記
 const uint8_t FRAME_START[] = {0xAA, 0x55};
 const uint8_t FRAME_END[] = {0x55, 0xAA};
@@ -66,59 +71,92 @@ int find_frame_start() {
 
 void forward_complete_frames() {
   while (true) {
+    // Need at least minimum frame size to proceed
     if (frame_buffer_pos < FRAME_MIN_SIZE) {
       return;
     }
 
+    // Find frame start marker
     int start_idx = find_frame_start();
     if (start_idx < 0) {
-      // Keep last byte only if it could be the beginning of FRAME_START
-      uint8_t last_byte = frame_buffer[frame_buffer_pos - 1];
-      if (last_byte == FRAME_START[0]) {
-        frame_buffer[0] = last_byte;
+      // No start marker found - keep last byte in case it's part of a split marker
+      if (frame_buffer_pos > 1) {
+        frame_buffer[0] = frame_buffer[frame_buffer_pos - 1];
         frame_buffer_pos = 1;
-      } else {
-        frame_buffer_pos = 0;
       }
       return;
     }
 
+    // Discard any data before start marker
     if (start_idx > 0) {
       shift_frame_buffer(static_cast<size_t>(start_idx));
       continue;
     }
 
+    // Need at least header to read length field: START(2) + TYPE(1) + LENGTH(2) = 5 bytes
     if (frame_buffer_pos < 5) {
       return;
     }
 
+    // Read payload length from header (bytes 3-4, big-endian)
+    // Header is: START(2) + TYPE(1) + LENGTH(2)
+    // So LENGTH field is at bytes [3:4] (0-indexed)
     size_t payload_length = (static_cast<size_t>(frame_buffer[3]) << 8) | frame_buffer[4];
+    
+    // Validate payload length
+    // Check both protocol maximum and buffer capacity
     if (payload_length == 0 || payload_length > MAX_FRAME_SIZE) {
-      Serial.println("\nWARN: Invalid frame length, skipping");
-      shift_frame_buffer(1);
+      Serial.print("\nWARN: Invalid frame length (");
+      Serial.print(payload_length);
+      Serial.println("), searching next start");
+      frames_dropped++;
+      shift_frame_buffer(2);
       continue;
     }
 
+    // Calculate total frame length
+    // Frame: START(2) + TYPE(1) + LENGTH(2) + DATA(payload_length) + CRC(2) + END(2)
+    // Total = 2 + 1 + 2 + payload_length + 2 + 2 = payload_length + 9
     size_t frame_length = payload_length + FRAME_MIN_SIZE;
+    
+    // Check if frame fits in buffer (additional safety check)
     if (frame_length > USB_BUFFER_SIZE) {
-      Serial.println("\nWARN: Frame larger than buffer, dropping");
+      Serial.print("\nWARN: Frame too large (");
+      Serial.print(frame_length);
+      Serial.print(" bytes, buffer max: ");
+      Serial.print(USB_BUFFER_SIZE);
+      Serial.println("), dropping and resetting");
+      frames_dropped++;
       reset_frame_buffer();
       return;
     }
 
+    // Wait for complete frame
     if (frame_buffer_pos < frame_length) {
       return;
     }
 
+    // Verify end marker at expected position
     if (frame_buffer[frame_length - 2] != FRAME_END[0] ||
         frame_buffer[frame_length - 1] != FRAME_END[1]) {
-      Serial.println("\nWARN: Frame end mismatch, searching next start");
-      shift_frame_buffer(1);
+      Serial.print("\nWARN: Frame end mismatch at offset ");
+      Serial.print(frame_length - 2);
+      Serial.print(", expected 0x55AA, got 0x");
+      Serial.print(frame_buffer[frame_length - 2], HEX);
+      Serial.print(frame_buffer[frame_length - 1], HEX);
+      Serial.println(", searching next start");
+      frames_dropped++;
+      // Skip start marker and search for next
+      shift_frame_buffer(2);
       continue;
     }
 
+    // Frame is complete and valid - forward to PC
     Serial.write(frame_buffer, frame_length);
     Serial.flush();
+    frames_forwarded++;
+    
+    // Remove forwarded frame from buffer
     shift_frame_buffer(frame_length);
   }
 }
@@ -159,9 +197,12 @@ void loop() {
     size_t bytes_read = LoRaSerial.readBytes(lora_buffer, LORA_BUFFER_SIZE);
 
     if (bytes_read > 0) {
+      // Check if adding new data would overflow buffer
       if (frame_buffer_pos + bytes_read > USB_BUFFER_SIZE) {
         size_t overflow = frame_buffer_pos + bytes_read - USB_BUFFER_SIZE;
-        Serial.println("\nWARN: Local frame buffer overflow, discarding oldest data");
+        Serial.print("\nWARN: Local frame buffer overflow (");
+        Serial.print(overflow);
+        Serial.println(" bytes), discarding oldest data");
         shift_frame_buffer(overflow + 1);
       }
 
@@ -169,6 +210,19 @@ void loop() {
       frame_buffer_pos += bytes_read;
       forward_complete_frames();
     }
+  }
+
+  // Print statistics every 60 seconds
+  unsigned long current_time = millis();
+  if (current_time - last_stats_time >= 60000) {
+    Serial.print("\n--- Stats: Forwarded=");
+    Serial.print(frames_forwarded);
+    Serial.print(", Dropped=");
+    Serial.print(frames_dropped);
+    Serial.print(", Buffer=");
+    Serial.print(frame_buffer_pos);
+    Serial.println(" bytes ---");
+    last_stats_time = current_time;
   }
 
   // 短暫延遲避免過度佔用 CPU

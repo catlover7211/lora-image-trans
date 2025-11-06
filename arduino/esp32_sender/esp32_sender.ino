@@ -29,15 +29,24 @@ uint8_t usb_buffer[USB_BUFFER_SIZE];
 size_t usb_buffer_pos = 0;
 uint8_t lora_buffer[LORA_BUFFER_SIZE];
 
+// Statistics
+unsigned long frames_sent = 0;
+unsigned long buffer_overflows = 0;
+unsigned long last_stats_time = 0;
+
 // 幀標記
 const uint8_t FRAME_START[] = {0xAA, 0x55};
 const uint8_t FRAME_END[] = {0x55, 0xAA};
 
 void setup() {
   // 初始化 USB Serial (連接 Raspberry Pi)
+  Serial.setTxBufferSize(1024);
+  Serial.setRxBufferSize(4096);
   Serial.begin(115200);
   
   // 初始化 LoRa Serial (連接 LoRa 模組)
+  LoRaSerial.setTxBufferSize(4096);
+  LoRaSerial.setRxBufferSize(1024);
   LoRaSerial.begin(115200, SERIAL_8N1, RXD2, TXD2);
 
   // 設定合理的超時
@@ -75,11 +84,7 @@ void loop() {
           // 完整幀接收完畢，轉發到 LoRa
           LoRaSerial.write(usb_buffer, usb_buffer_pos);
           LoRaSerial.flush();
-          
-          // 可選的除錯輸出（取消註解以啟用）
-          // Serial.print("Forwarded frame to LoRa: ");
-          // Serial.print(usb_buffer_pos);
-          // Serial.println(" bytes");
+          frames_sent++;
           
           // 重置緩衝區
           usb_buffer_pos = 0;
@@ -87,7 +92,10 @@ void loop() {
       }
     } else {
       // 緩衝區溢位 - 尋找下一個 FRAME_START 重新同步
-      Serial.println("ERROR: USB buffer overflow, resetting");
+      Serial.print("\nERROR: USB buffer overflow (");
+      Serial.print(usb_buffer_pos);
+      Serial.println(" bytes), resetting");
+      buffer_overflows++;
       usb_buffer_pos = 0;
       
       // 清空序列埠緩衝區直到找到 FRAME_START
@@ -101,10 +109,22 @@ void loop() {
             usb_buffer[1] = b2;
             usb_buffer_pos = 2;
             found_start = true;
+            Serial.println("Found new frame start, resyncing");
           }
         }
       }
     }
+  }
+
+  // Print statistics every 60 seconds
+  unsigned long current_time = millis();
+  if (current_time - last_stats_time >= 60000) {
+    Serial.print("\n--- Stats: Sent=");
+    Serial.print(frames_sent);
+    Serial.print(", Overflows=");
+    Serial.print(buffer_overflows);
+    Serial.println(" ---");
+    last_stats_time = current_time;
   }
 
   // 短暫延遲避免過度佔用 CPU

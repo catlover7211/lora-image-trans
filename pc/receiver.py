@@ -56,6 +56,8 @@ def main():
     error_count = 0
     jpeg_count = 0
     cs_count = 0
+    crc_errors = 0
+    invalid_frames = 0
     start_time = time.time()
     last_display = None
     
@@ -77,7 +79,12 @@ def main():
             result = decode_frame(frame_bytes)
             if result is None:
                 error_count += 1
-                print("Warning: Invalid frame received")
+                invalid_frames += 1
+                # More detailed error logging
+                if len(frame_bytes) >= 9:
+                    print(f"Warning: Invalid frame received (length: {len(frame_bytes)} bytes)")
+                else:
+                    print(f"Warning: Frame too short (length: {len(frame_bytes)} bytes)")
                 continue
             
             frame_type, data = result
@@ -115,10 +122,11 @@ def main():
             if frame_count % 10 == 0:
                 elapsed = time.time() - start_time
                 fps = frame_count / elapsed if elapsed > 0 else 0
+                error_rate = (error_count / (frame_count + error_count) * 100) if (frame_count + error_count) > 0 else 0
                 print(f"Frames: {frame_count} (JPEG: {jpeg_count}, CS: {cs_count}), "
                       f"Data size: {len(data)} bytes, "
                       f"FPS: {fps:.2f}, "
-                      f"Errors: {error_count}")
+                      f"Errors: {error_count} ({error_rate:.1f}%)")
     
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
@@ -132,13 +140,18 @@ def main():
         # Print final statistics
         total_time = time.time() - start_time
         avg_fps = frame_count / total_time if total_time > 0 else 0
+        total_received = frame_count + error_count
+        success_rate = (frame_count / total_received * 100) if total_received > 0 else 0
         print("\n" + "=" * 60)
         print("Session Statistics")
         print("=" * 60)
-        print(f"Total frames: {frame_count}")
+        print(f"Total frames received: {total_received}")
+        print(f"Successfully decoded: {frame_count}")
         print(f"JPEG frames: {jpeg_count}")
         print(f"CS frames: {cs_count}")
         print(f"Total errors: {error_count}")
+        print(f"Invalid frames: {invalid_frames}")
+        print(f"Success rate: {success_rate:.1f}%")
         print(f"Total time: {total_time:.2f} seconds")
         print(f"Average FPS: {avg_fps:.2f}")
         print("=" * 60)
