@@ -90,17 +90,26 @@ class SerialComm:
             # Look for frame start marker
             start_idx = self._buffer.find(FRAME_START)
             if start_idx == -1:
-                # No start marker, keep last few bytes in case split across reads
-                if len(self._buffer) > 1000:
-                    self._buffer = self._buffer[-100:]
+                # No start marker found
+                # Keep last byte in case it's part of a split start marker
+                if len(self._buffer) > 1:
+                    self._buffer = self._buffer[-1:]
                 return None
             
             # Discard data before start marker
             if start_idx > 0:
                 self._buffer = self._buffer[start_idx:]
             
+            # Need at least minimum frame to proceed: START(2) + TYPE(1) + LENGTH(2) + CRC(2) + END(2) = 9
+            if len(self._buffer) < 9:
+                # Prevent buffer from growing too large while waiting
+                if len(self._buffer) > 100000:
+                    print("Warning: Buffer overflow while waiting for complete frame, resetting")
+                    self._buffer.clear()
+                return None
+            
             # Look for frame end marker
-            end_idx = self._buffer.find(FRAME_END)
+            end_idx = self._buffer.find(FRAME_END, 2)  # Start search after START marker
             if end_idx == -1:
                 # No end marker yet, keep buffer and wait for more data
                 # Prevent buffer from growing too large
