@@ -178,10 +178,6 @@ def main():
                 print(f"Error: Failed to build frame: {e}")
                 cleanup_resources(camera, serial_comm, args.preview)
                 return
-                serial_comm.close()
-                if args.preview:
-                    cv2.destroyAllWindows()
-                return
             
             # Send via serial
             print(f"Sending photo ({len(encoded_data)} bytes encoded, {len(protocol_frame)} bytes total)...")
