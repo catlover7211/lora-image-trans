@@ -21,7 +21,8 @@ from serial_comm import SerialComm
 from common.protocol import encode_frame, TYPE_JPEG, TYPE_CS
 from common.config import (
     DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_JPEG_QUALITY,
-    WINDOW_TITLE_SENDER, CS_MEASUREMENT_RATE, CS_BLOCK_SIZE
+    WINDOW_TITLE_SENDER, CS_MEASUREMENT_RATE, CS_BLOCK_SIZE,
+    INTER_FRAME_DELAY
 )
 
 
@@ -41,6 +42,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--cs-block', type=int, default=CS_BLOCK_SIZE,
                         help=f'CS block size (default: {CS_BLOCK_SIZE})')
     parser.add_argument('--fps', type=float, default=10.0, help='Target FPS (default: 10.0)')
+    parser.add_argument('--inter-frame-delay', type=float, default=INTER_FRAME_DELAY,
+                        help=f'Delay between frames in seconds to prevent receiver overflow (default: {INTER_FRAME_DELAY})')
     parser.add_argument('--preview', action='store_true', help='Show preview window')
     return parser.parse_args()
 
@@ -74,7 +77,7 @@ def main():
         print(f"CS Block Size: {args.cs_block}")
     
     # Initialize serial communication
-    serial_comm = SerialComm(port=args.port)
+    serial_comm = SerialComm(port=args.port, inter_frame_delay=args.inter_frame_delay)
     if not serial_comm.open():
         print("Failed to open serial port")
         camera.close()
@@ -82,6 +85,8 @@ def main():
     
     print("=" * 60)
     print("System initialized successfully")
+    if args.inter_frame_delay > 0:
+        print(f"Inter-frame delay: {args.inter_frame_delay:.3f}s")
     print("Press 'q' in preview window or Ctrl+C to quit")
     print("=" * 60)
     

@@ -5,14 +5,15 @@ from typing import Optional
 import serial
 import serial.tools.list_ports
 
-from common.config import BAUD_RATE, SERIAL_TIMEOUT, CHUNK_SIZE
+from common.config import BAUD_RATE, SERIAL_TIMEOUT, CHUNK_SIZE, INTER_FRAME_DELAY
 
 
 class SerialComm:
     """Handles serial communication with ESP32."""
     
     def __init__(self, port: Optional[str] = None, baud_rate: int = BAUD_RATE, 
-                 timeout: float = SERIAL_TIMEOUT, chunk_size: int = CHUNK_SIZE):
+                 timeout: float = SERIAL_TIMEOUT, chunk_size: int = CHUNK_SIZE,
+                 inter_frame_delay: float = INTER_FRAME_DELAY):
         """Initialize serial communication.
         
         Args:
@@ -20,11 +21,13 @@ class SerialComm:
             baud_rate: Baud rate, default 115200
             timeout: Read timeout in seconds
             chunk_size: Chunk size for transmission
+            inter_frame_delay: Delay between frames in seconds
         """
         self.port = port
         self.baud_rate = baud_rate
         self.timeout = timeout
         self.chunk_size = chunk_size
+        self.inter_frame_delay = inter_frame_delay
         self.ser: Optional[serial.Serial] = None
     
     def find_port(self) -> Optional[str]:
@@ -93,6 +96,11 @@ class SerialComm:
                 self.ser.flush()
                 if i + self.chunk_size < len(data):
                     time.sleep(0.003)
+            
+            # Add inter-frame delay to prevent receiver buffer overflow
+            # This delay allows the receiver to process the frame before the next one arrives
+            if self.inter_frame_delay > 0:
+                time.sleep(self.inter_frame_delay)
             
             return True
             
