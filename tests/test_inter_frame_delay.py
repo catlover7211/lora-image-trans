@@ -3,6 +3,7 @@ import unittest
 import sys
 import os
 import time
+import math
 from unittest.mock import Mock, patch, MagicMock
 
 # Add parent directory to path
@@ -102,21 +103,26 @@ class TestInterFrameDelay(unittest.TestCase):
         comm.ser = mock_serial
         
         # Send data larger than chunk size
-        test_data = b"x" * 35  # Will need 4 chunks
+        test_data = b"x" * 35
         result = comm.send(test_data)
         
         # Verify send was successful
         self.assertTrue(result)
         
-        # Verify sleep was called: 3 times for inter-chunk (0.003s) + 1 time for inter-frame (custom_delay)
-        self.assertEqual(mock_sleep.call_count, 4)
+        # Calculate expected number of chunks and inter-chunk delays
+        expected_chunks = math.ceil(len(test_data) / chunk_size)  # 4 chunks for 35 bytes
+        expected_inter_chunk_delays = expected_chunks - 1  # Delay after each chunk except the last
+        expected_total_sleep_calls = expected_inter_chunk_delays + 1  # inter-chunk + inter-frame
+        
+        # Verify sleep was called the expected number of times
+        self.assertEqual(mock_sleep.call_count, expected_total_sleep_calls)
         
         # Verify the last sleep call is the inter-frame delay
         last_call_args = mock_sleep.call_args_list[-1][0]
         self.assertEqual(last_call_args[0], custom_delay)
         
-        # Verify the inter-chunk delays (first 3 calls)
-        for i in range(3):
+        # Verify the inter-chunk delays (all calls except the last one)
+        for i in range(expected_inter_chunk_delays):
             call_args = mock_sleep.call_args_list[i][0]
             self.assertEqual(call_args[0], 0.003)
 
