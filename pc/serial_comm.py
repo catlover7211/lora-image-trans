@@ -5,7 +5,7 @@ from typing import Optional
 import serial
 import serial.tools.list_ports
 
-from common.config import BAUD_RATE, SERIAL_TIMEOUT, FRAME_START, FRAME_END
+from common.config import BAUD_RATE, SERIAL_TIMEOUT, FRAME_START, FRAME_END, MAX_FRAME_SIZE
 
 
 class SerialComm:
@@ -26,52 +26,73 @@ class SerialComm:
         self.ser: Optional[serial.Serial] = None
         self._buffer = bytearray()
     
-    def find_port(self) -> Optional[str]:
-        """Auto-detect available serial port.
-        
+    def receive_frame(self) -> Optional[bytes]:
+        """Receive a complete protocol frame using length-based assembly.
+
         Returns:
-            Port name or None if not found
+            Complete frame bytes or None if no complete frame available
         """
-        ports = serial.tools.list_ports.comports()
-        for port in ports:
-            # Prefer USB serial devices
-            if 'USB' in port.description or 'ACM' in port.device or 'USB' in port.device:
-                return port.device
-        
-        # Return first available port if no USB device found
-        if ports:
-            return ports[0].device
-        
-        return None
-    
-    def open(self) -> bool:
-        """Open serial connection.
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        if self.port is None:
-            self.port = self.find_port()
-            if self.port is None:
-                print("Error: No serial port found")
-                return False
-        
+        if self.ser is None or not self.ser.is_open:
+            return None
+
         try:
-            self.ser = serial.Serial(
-                port=self.port,
-                baudrate=self.baud_rate,
-                timeout=self.timeout
-            )
-            time.sleep(0.5)  # Wait for connection to stabilize
-            # Flush any stale data
-            self.ser.reset_input_buffer()
-            print(f"Serial port opened: {self.port} @ {self.baud_rate} bps")
-            return True
-            
+            # Read available data
+            if self.ser.in_waiting > 0:
+                data = self.ser.read(self.ser.in_waiting)
+                self._buffer.extend(data)
+
+            # Keep trimming runaway buffers conservatively
+            if len(self._buffer) > (MAX_FRAME_SIZE + 4096):
+                # Preserve potential partial start marker
+                tail = self._buffer[-2:]
+                self._buffer.clear()
+                self._buffer.extend(tail)
+
+            # Search for a start marker
+            start_idx = self._buffer.find(FRAME_START)
+            if start_idx == -1:
+                # Keep only last byte if it could be the start of FRAME_START
+                if len(self._buffer) > 0 and self._buffer[-1:] == FRAME_START[:1]:
+                    self._buffer = bytearray(self._buffer[-1:])
+                else:
+                    self._buffer.clear()
+                return None
+
+            # Drop any noise before the start marker
+            if start_idx > 0:
+                del self._buffer[:start_idx]
+
+            # Need at least START(2) + TYPE(1) + LEN(2)
+            if len(self._buffer) < 5:
+                return None
+
+            # Parse length from header (big-endian)
+            data_len = (self._buffer[3] << 8) | self._buffer[4]
+            if data_len == 0 or data_len > MAX_FRAME_SIZE:
+                # Invalid length, shift by one and retry next time
+                del self._buffer[0]
+                return None
+
+            total_len = 2 + 1 + 2 + data_len + 2 + 2  # START + TYPE + LEN + DATA + CRC + END
+
+            # Wait for full frame
+            if len(self._buffer) < total_len:
+                return None
+
+            # Verify end marker is at the expected position
+            if self._buffer[total_len - 2: total_len] != FRAME_END:
+                # Not aligned; drop first byte to resync (length is untrusted if corrupted)
+                del self._buffer[0]
+                return None
+
+            # Extract the frame and remove from buffer
+            frame = bytes(self._buffer[:total_len])
+            del self._buffer[:total_len]
+            return frame
+
         except serial.SerialException as e:
-            print(f"Error opening serial port {self.port}: {e}")
-            return False
-    
+            print(f"Error receiving data: {e}")
+            return None
     def receive_frame(self) -> Optional[bytes]:
         """Receive a complete protocol frame.
         
