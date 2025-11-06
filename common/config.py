@@ -17,11 +17,11 @@ DEFAULT_JPEG_QUALITY = 85
 
 # Compressed Sensing settings
 CS_MEASUREMENT_RATE = 0.1  # 10% sampling rate
-CS_BLOCK_SIZE = 32  # 32x32 pixel blocks
+CS_BLOCK_SIZE = 16  # 16x16 pixel blocks
 
 # Buffer settings
 MAX_FRAME_SIZE = 65535  # Maximum 2^16-1 bytes per frame
-CHUNK_SIZE = 50  # Bytes per chunk for LoRa transmission
+CHUNK_SIZE = 500  # Bytes per chunk for LoRa transmission
 
 # Flow control settings
 INTER_FRAME_DELAY = 0.05  # Delay between frames in seconds (50ms) to prevent receiver buffer overflow
