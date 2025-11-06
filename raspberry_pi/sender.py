@@ -53,6 +53,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def cleanup_resources(camera, serial_comm, preview_enabled):
+    """Clean up camera, serial, and display resources."""
+    print("\nCleaning up...")
+    camera.close()
+    serial_comm.close()
+    if preview_enabled:
+        cv2.destroyAllWindows()
+
+
 def main():
     """Main application loop."""
     args = parse_args()
@@ -133,7 +142,7 @@ def main():
                         continue
                     
                     cv2.imshow(window_title, frame)
-                    key = cv2.waitKey(1) & 0xFF
+                    key = cv2.waitKey(30) & 0xFF  # Limit preview to ~30 FPS
                     if key == ord('q'):
                         break
             else:
@@ -145,10 +154,7 @@ def main():
             frame = camera.capture()
             if frame is None:
                 print("Error: Failed to capture photo")
-                camera.close()
-                serial_comm.close()
-                if args.preview:
-                    cv2.destroyAllWindows()
+                cleanup_resources(camera, serial_comm, args.preview)
                 return
             
             # Show captured image if preview enabled
@@ -162,10 +168,7 @@ def main():
             encoded_data = encoder.encode(frame)
             if encoded_data is None:
                 print("Error: Failed to encode photo")
-                camera.close()
-                serial_comm.close()
-                if args.preview:
-                    cv2.destroyAllWindows()
+                cleanup_resources(camera, serial_comm, args.preview)
                 return
             
             # Build protocol frame
@@ -173,7 +176,8 @@ def main():
                 protocol_frame = encode_frame(frame_type, encoded_data)
             except ValueError as e:
                 print(f"Error: Failed to build frame: {e}")
-                camera.close()
+                cleanup_resources(camera, serial_comm, args.preview)
+                return
                 serial_comm.close()
                 if args.preview:
                     cv2.destroyAllWindows()
@@ -191,11 +195,7 @@ def main():
         
         finally:
             # Cleanup
-            print("\nCleaning up...")
-            camera.close()
-            serial_comm.close()
-            if args.preview:
-                cv2.destroyAllWindows()
+            cleanup_resources(camera, serial_comm, args.preview)
         
         return
     
@@ -272,11 +272,7 @@ def main():
     
     finally:
         # Cleanup
-        print("\nCleaning up...")
-        camera.close()
-        serial_comm.close()
-        if args.preview:
-            cv2.destroyAllWindows()
+        cleanup_resources(camera, serial_comm, args.preview)
         
         # Print final statistics
         total_time = time.time() - start_time

@@ -73,7 +73,7 @@ def main():
             frame_bytes = None
             while frame_bytes is None:
                 frame_bytes = serial_comm.receive_frame()
-                time.sleep(0.001)
+                time.sleep(0.01)  # 10ms delay to reduce CPU usage
             
             print(f"Received {len(frame_bytes)} bytes")
             
