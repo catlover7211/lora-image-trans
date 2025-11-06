@@ -58,6 +58,8 @@ class TestRelayMode(unittest.TestCase):
         start_idx = buffer.find(FRAME_START)
         if start_idx == -1:
             # No start marker found
+            # Keep last byte in case it's part of a split start marker
+            # (START marker could be split across chunks: 0xAA | 0x55)
             if len(buffer) > 1:
                 buffer = buffer[-1:]
             return None, buffer
