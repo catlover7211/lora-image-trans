@@ -142,7 +142,7 @@ def main():
                         continue
                     
                     cv2.imshow(window_title, frame)
-                    key = cv2.waitKey(30) & 0xFF  # Limit preview to ~30 FPS
+                    key = cv2.waitKey(30) & 0xFF  # 30ms delay = ~33 FPS
                     if key == ord('q'):
                         break
             else:

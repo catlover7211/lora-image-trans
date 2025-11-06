@@ -50,7 +50,7 @@ class TestPhotoModeQuality(unittest.TestCase):
     def test_photo_resolution_is_high_definition(self):
         """Test that photo mode resolution meets project's high-quality requirements."""
         # Project defines 640x480 as high-quality for this use case
-        # Note: Modern HD typically starts at 720p (1280x720), but this is sufficient
+        # Note: Full HD is 1080p (1920x1080), but 640x480 is sufficient
         # for the project's requirements of high-definition relative to CCTV mode
         self.assertGreaterEqual(PHOTO_WIDTH, 640)
         self.assertGreaterEqual(PHOTO_HEIGHT, 480)
