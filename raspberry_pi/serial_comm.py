@@ -89,10 +89,10 @@ class SerialComm:
             for i in range(0, len(data), self.chunk_size):
                 chunk = data[i:i + self.chunk_size]
                 self.ser.write(chunk)
+                # Use short pacing to avoid overrunning LoRa UART bridge
                 self.ser.flush()
-                # Small delay between chunks to avoid overwhelming the receiver
                 if i + self.chunk_size < len(data):
-                    time.sleep(0.001)
+                    time.sleep(0.003)
             
             return True
             

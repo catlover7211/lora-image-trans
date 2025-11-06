@@ -12,6 +12,7 @@
  */
 
 #include <HardwareSerial.h>
+#include <cstring>
 
 // 定義 ESP32 的 UART2 引腳 (連接 LoRa 模組)
 #define RXD2 16
@@ -20,7 +21,8 @@
 // 緩衝區大小
 #define LORA_BUFFER_SIZE 512
 #define MAX_FRAME_SIZE 65535
-#define USB_BUFFER_SIZE (MAX_FRAME_SIZE + 16)
+#define FRAME_MIN_SIZE 9
+#define USB_BUFFER_SIZE (MAX_FRAME_SIZE + FRAME_MIN_SIZE + 8)
 
 // 使用 ESP32 的第二個串口連接 LoRa 模組
 HardwareSerial LoRaSerial(2);
@@ -28,116 +30,103 @@ HardwareSerial LoRaSerial(2);
 // 緩衝區
 uint8_t lora_buffer[LORA_BUFFER_SIZE];
 uint8_t frame_buffer[USB_BUFFER_SIZE];
-
-enum FrameState {
-  SeekingStart,
-  CollectingFrame
-};
-
-FrameState frame_state = SeekingStart;
 size_t frame_buffer_pos = 0;
-size_t expected_frame_length = 0;
-size_t start_match = 0;
 
 // 幀標記
 const uint8_t FRAME_START[] = {0xAA, 0x55};
 const uint8_t FRAME_END[] = {0x55, 0xAA};
 
-void reset_frame_state() {
-  frame_state = SeekingStart;
+void reset_frame_buffer() {
   frame_buffer_pos = 0;
-  expected_frame_length = 0;
-  start_match = 0;
 }
 
-void try_resync_with_byte(uint8_t byte) {
-  if (byte == FRAME_START[0]) {
-    frame_buffer[0] = byte;
-    start_match = 1;
+void shift_frame_buffer(size_t offset) {
+  if (offset == 0 || frame_buffer_pos == 0) {
+    return;
   }
+  if (offset >= frame_buffer_pos) {
+    frame_buffer_pos = 0;
+    return;
+  }
+  memmove(frame_buffer, frame_buffer + offset, frame_buffer_pos - offset);
+  frame_buffer_pos -= offset;
 }
 
-void process_byte(uint8_t byte) {
-  if (frame_state == SeekingStart) {
-    if (start_match == 0) {
-      if (byte == FRAME_START[0]) {
-        frame_buffer[0] = byte;
-        start_match = 1;
-      }
-    } else {  // start_match == 1
-      if (byte == FRAME_START[1]) {
-        frame_buffer[1] = byte;
-        frame_buffer_pos = 2;
-        frame_state = CollectingFrame;
-        expected_frame_length = 0;
-        start_match = 0;
-      } else if (byte == FRAME_START[0]) {
-        frame_buffer[0] = byte;
-        start_match = 1;
-      } else {
-        start_match = 0;
-      }
+int find_frame_start() {
+  if (frame_buffer_pos < 2) {
+    return -1;
+  }
+  for (size_t i = 0; i < frame_buffer_pos - 1; ++i) {
+    if (frame_buffer[i] == FRAME_START[0] && frame_buffer[i + 1] == FRAME_START[1]) {
+      return static_cast<int>(i);
     }
-    return;
   }
+  return -1;
+}
 
-  // Collecting frame payload
-  if (frame_buffer_pos >= USB_BUFFER_SIZE) {
-    Serial.println("\nWARN: Frame buffer overflow, dropping");
-    reset_frame_state();
-    try_resync_with_byte(byte);
-    return;
-  }
-
-  frame_buffer[frame_buffer_pos++] = byte;
-
-  // Once header is complete determine expected length
-  if (frame_buffer_pos >= 5 && expected_frame_length == 0) {
-    size_t payload_length = (static_cast<size_t>(frame_buffer[3]) << 8) | frame_buffer[4];
-    if (payload_length == 0 || payload_length > MAX_FRAME_SIZE) {
-      Serial.println("\nWARN: Invalid frame length, dropping");
-      reset_frame_state();
-      try_resync_with_byte(byte);
+void forward_complete_frames() {
+  while (true) {
+    if (frame_buffer_pos < FRAME_MIN_SIZE) {
       return;
     }
-    expected_frame_length = payload_length + 9;  // full frame including markers
-  }
 
-  // Allow extra bytes until we actually see the frame end markers.
-  if (expected_frame_length > 0 && frame_buffer_pos > expected_frame_length + 4) {
-    Serial.println("\nWARN: Frame exceeded expected length, dropping");
-    reset_frame_state();
-    try_resync_with_byte(byte);
-    return;
-  }
-
-  // Check for frame end markers once we have enough data.
-  if (frame_buffer_pos >= 2 &&
-      frame_buffer[frame_buffer_pos - 2] == FRAME_END[0] &&
-      frame_buffer[frame_buffer_pos - 1] == FRAME_END[1]) {
-    if (frame_buffer_pos < 9) {
-      Serial.println("\nWARN: Frame too short, dropping");
-    } else {
-      size_t reported_length = (static_cast<size_t>(frame_buffer[3]) << 8) | frame_buffer[4];
-      size_t actual_payload = frame_buffer_pos - 9;
-      if (reported_length != actual_payload) {
-        Serial.println("\nWARN: Length mismatch, dropping");
-      } else {
-        Serial.write(frame_buffer, frame_buffer_pos);
-        Serial.flush();
-      }
+    int start_idx = find_frame_start();
+    if (start_idx < 0) {
+      // Keep last byte in case start marker is split across chunks
+      frame_buffer[0] = frame_buffer[frame_buffer_pos - 1];
+      frame_buffer_pos = 1;
+      return;
     }
 
-    reset_frame_state();
+    if (start_idx > 0) {
+      shift_frame_buffer(static_cast<size_t>(start_idx));
+      continue;
+    }
+
+    if (frame_buffer_pos < 5) {
+      return;
+    }
+
+    size_t payload_length = (static_cast<size_t>(frame_buffer[3]) << 8) | frame_buffer[4];
+    if (payload_length == 0 || payload_length > MAX_FRAME_SIZE) {
+      Serial.println("\nWARN: Invalid frame length, skipping");
+      shift_frame_buffer(2);
+      continue;
+    }
+
+    size_t frame_length = payload_length + FRAME_MIN_SIZE;
+    if (frame_length > USB_BUFFER_SIZE) {
+      Serial.println("\nWARN: Frame larger than buffer, dropping");
+      reset_frame_buffer();
+      return;
+    }
+
+    if (frame_buffer_pos < frame_length) {
+      return;
+    }
+
+    if (frame_buffer[frame_length - 2] != FRAME_END[0] ||
+        frame_buffer[frame_length - 1] != FRAME_END[1]) {
+      Serial.println("\nWARN: Frame end mismatch, searching next start");
+      shift_frame_buffer(2);
+      continue;
+    }
+
+    Serial.write(frame_buffer, frame_length);
+    Serial.flush();
+    shift_frame_buffer(frame_length);
   }
 }
 
 void setup() {
-  reset_frame_state();
+  reset_frame_buffer();
   // 初始化 USB Serial (連接電腦)
+  Serial.setTxBufferSize(4096);
+  Serial.setRxBufferSize(1024);
   Serial.begin(115200);
   
   // 初始化 LoRa Serial (連接 LoRa 模組)
+  LoRaSerial.setRxBufferSize(4096);
   LoRaSerial.begin(115200, SERIAL_8N1, RXD2, TXD2);
 
   // 設定合理的超時
@@ -165,9 +154,15 @@ void loop() {
     size_t bytes_read = LoRaSerial.readBytes(lora_buffer, LORA_BUFFER_SIZE);
 
     if (bytes_read > 0) {
-      for (size_t i = 0; i < bytes_read; i++) {
-        process_byte(lora_buffer[i]);
+      if (frame_buffer_pos + bytes_read > USB_BUFFER_SIZE) {
+        size_t overflow = frame_buffer_pos + bytes_read - USB_BUFFER_SIZE;
+        Serial.println("\nWARN: Local frame buffer overflow, discarding oldest data");
+        shift_frame_buffer(overflow + 1);
       }
+
+      memcpy(frame_buffer + frame_buffer_pos, lora_buffer, bytes_read);
+      frame_buffer_pos += bytes_read;
+      forward_complete_frames();
     }
   }
 
