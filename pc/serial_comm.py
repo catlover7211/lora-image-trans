@@ -109,7 +109,8 @@ class SerialComm:
                 return None
             
             # Look for frame end marker
-            end_idx = self._buffer.find(FRAME_END, 2)  # Start search after START marker
+            # Search after the header (START + TYPE + LENGTH = 5 bytes) to avoid false positives
+            end_idx = self._buffer.find(FRAME_END, 5)
             if end_idx == -1:
                 # No end marker yet, keep buffer and wait for more data
                 # Prevent buffer from growing too large

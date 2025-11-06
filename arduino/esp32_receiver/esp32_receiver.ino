@@ -104,6 +104,7 @@ void forward_complete_frames() {
     size_t payload_length = (static_cast<size_t>(frame_buffer[3]) << 8) | frame_buffer[4];
     
     // Validate payload length
+    // Check both protocol maximum and buffer capacity
     if (payload_length == 0 || payload_length > MAX_FRAME_SIZE) {
       Serial.print("\nWARN: Invalid frame length (");
       Serial.print(payload_length);
@@ -118,11 +119,13 @@ void forward_complete_frames() {
     // Total = 2 + 1 + 2 + payload_length + 2 + 2 = payload_length + 9
     size_t frame_length = payload_length + FRAME_MIN_SIZE;
     
-    // Check if frame fits in buffer
+    // Check if frame fits in buffer (additional safety check)
     if (frame_length > USB_BUFFER_SIZE) {
       Serial.print("\nWARN: Frame too large (");
       Serial.print(frame_length);
-      Serial.println(" bytes), dropping and resetting");
+      Serial.print(" bytes, buffer max: ");
+      Serial.print(USB_BUFFER_SIZE);
+      Serial.println("), dropping and resetting");
       frames_dropped++;
       reset_frame_buffer();
       return;
