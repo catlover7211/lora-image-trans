@@ -18,13 +18,16 @@ from jpeg_decoder import JPEGDecoder
 from cs_decoder import CSDecoder
 from serial_comm import SerialComm
 from common.protocol import decode_frame, get_frame_type_name, TYPE_JPEG, TYPE_CS
-from common.config import WINDOW_TITLE_RECEIVER
+from common.config import WINDOW_TITLE_RECEIVER, WINDOW_TITLE_PHOTO_RECEIVER, MODE_CCTV, MODE_PHOTO
 
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='PC CCTV Receiver')
+    parser = argparse.ArgumentParser(description='PC Image Receiver')
+    parser.add_argument('--mode', type=str, choices=['cctv', 'photo'], default='cctv',
+                        help='Operating mode: cctv (continuous video) or photo (single image) (default: cctv)')
     parser.add_argument('--port', type=str, help='Serial port (auto-detect if not specified)')
+    parser.add_argument('--save', type=str, help='Save received photo to file (photo mode only)')
     return parser.parse_args()
 
 
@@ -32,8 +35,10 @@ def main():
     """Main application loop."""
     args = parse_args()
     
+    window_title = WINDOW_TITLE_PHOTO_RECEIVER if args.mode == MODE_PHOTO else WINDOW_TITLE_RECEIVER
+    
     print("=" * 60)
-    print("PC CCTV Receiver")
+    print(f"PC Image Receiver - {args.mode.upper()} Mode")
     print("=" * 60)
     
     # Initialize decoders
@@ -48,10 +53,81 @@ def main():
     
     print("=" * 60)
     print("System initialized successfully")
-    print("Waiting for frames...")
+    
+    if args.mode == MODE_PHOTO:
+        print("Waiting for photo...")
+        if args.save:
+            print(f"Will save to: {args.save}")
+    else:
+        print("Waiting for frames...")
+    
     print("Press 'q' in display window or Ctrl+C to quit")
     print("=" * 60)
     
+    # Photo mode: receive and display single image
+    if args.mode == MODE_PHOTO:
+        try:
+            print("\nWaiting to receive photo...")
+            
+            # Receive frame
+            frame_bytes = None
+            while frame_bytes is None:
+                frame_bytes = serial_comm.receive_frame()
+                time.sleep(0.01)  # 10ms delay to reduce CPU usage
+            
+            print(f"Received {len(frame_bytes)} bytes")
+            
+            # Decode protocol frame
+            result = decode_frame(frame_bytes)
+            if result is None:
+                print("Error: Invalid frame received")
+                serial_comm.close()
+                return
+            
+            frame_type, data = result
+            print(f"Frame type: {get_frame_type_name(frame_type)}")
+            print(f"Data size: {len(data)} bytes")
+            
+            # Decode image based on type
+            image = None
+            if frame_type == TYPE_JPEG:
+                image = jpeg_decoder.decode(data)
+            elif frame_type == TYPE_CS:
+                image = cs_decoder.decode(data)
+            else:
+                print(f"Error: Unknown frame type: {frame_type}")
+                serial_comm.close()
+                return
+            
+            if image is None:
+                print(f"Error: Failed to decode {get_frame_type_name(frame_type)} image")
+                serial_comm.close()
+                return
+            
+            print(f"Photo decoded successfully! Resolution: {image.shape[1]}x{image.shape[0]}")
+            
+            # Save if requested
+            if args.save:
+                cv2.imwrite(args.save, image)
+                print(f"Photo saved to: {args.save}")
+            
+            # Display image
+            print("\nDisplaying photo. Press any key to close...")
+            cv2.imshow(window_title, image)
+            cv2.waitKey(0)
+        
+        except KeyboardInterrupt:
+            print("\n\nInterrupted by user")
+        
+        finally:
+            # Cleanup
+            print("\nCleaning up...")
+            serial_comm.close()
+            cv2.destroyAllWindows()
+        
+        return
+    
+    # CCTV mode: continuous reception (original behavior)
     frame_count = 0
     error_count = 0
     jpeg_count = 0
@@ -108,7 +184,7 @@ def main():
                 continue
             
             # Display image
-            cv2.imshow(WINDOW_TITLE_RECEIVER, image)
+            cv2.imshow(window_title, image)
             last_display = image
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):

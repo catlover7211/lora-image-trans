@@ -26,6 +26,17 @@ CHUNK_SIZE = 5000  # Bytes per chunk for LoRa transmission
 # Flow control settings
 INTER_FRAME_DELAY = 0.005  # Delay between frames in seconds (5ms) to prevent receiver buffer overflow
 
+# Mode settings
+MODE_CCTV = 'cctv'  # Continuous video streaming mode
+MODE_PHOTO = 'photo'  # Single high-quality photo mode
+
 # Display settings
 WINDOW_TITLE_SENDER = 'CCTV Sender (Press q to quit)'
 WINDOW_TITLE_RECEIVER = 'CCTV Receiver (Press q to quit)'
+WINDOW_TITLE_PHOTO_SENDER = 'Photo Sender'
+WINDOW_TITLE_PHOTO_RECEIVER = 'Photo Receiver'
+
+# Photo mode settings
+PHOTO_WIDTH = 640  # Higher resolution for photo mode
+PHOTO_HEIGHT = 480
+PHOTO_JPEG_QUALITY = 95  # Higher quality for photo mode
