@@ -22,16 +22,29 @@ class CSDecoder:
             BGR grayscale image or None on failure
         """
         try:
-            # Parse header
+            # Parse header safely (avoid uint8 overflow by casting to Python ints)
             data_arr = np.frombuffer(data, dtype=np.uint8)
-            if len(data_arr) < 6:
+            if data_arr.size < 6:
                 return None
-            
-            height = data_arr[0] | (data_arr[1] << 8)
-            width = data_arr[2] | (data_arr[3] << 8)
-            block_size = data_arr[4]
-            measurements_per_block = data_arr[5]
-            
+
+            h_lo = int(data_arr[0])
+            h_hi = int(data_arr[1])
+            w_lo = int(data_arr[2])
+            w_hi = int(data_arr[3])
+            height = (h_hi << 8) | h_lo
+            width = (w_hi << 8) | w_lo
+            block_size = int(data_arr[4])
+            measurements_per_block = int(data_arr[5])
+
+            # Basic sanity checks
+            if height <= 0 or width <= 0:
+                return None
+            if block_size < 4 or block_size > 64:
+                return None
+            max_coeffs = block_size * block_size
+            if measurements_per_block <= 0 or measurements_per_block > max_coeffs:
+                return None
+
             payload = data_arr[6:]
             
             # Calculate padded dimensions
@@ -41,21 +54,21 @@ class CSDecoder:
             # Calculate expected data length
             num_blocks_h = padded_h // block_size
             num_blocks_w = padded_w // block_size
-            total_blocks = num_blocks_h * num_blocks_w
-            expected_length = total_blocks * measurements_per_block
+            total_blocks = int(num_blocks_h * num_blocks_w)
+            expected_length = int(total_blocks * measurements_per_block)
             
-            if len(payload) < expected_length:
+            if payload.size < expected_length:
                 return None
             
             # Reconstruct image
             reconstructed = np.zeros((padded_h, padded_w), dtype=np.float32)
             
-            block_idx = 0
+            block_idx: int = 0
             for i in range(0, padded_h, block_size):
                 for j in range(0, padded_w, block_size):
                     # Extract measurements for this block
-                    start_idx = block_idx * measurements_per_block
-                    end_idx = start_idx + measurements_per_block
+                    start_idx: int = int(block_idx * measurements_per_block)
+                    end_idx: int = start_idx + int(measurements_per_block)
                     measurements = payload[start_idx:end_idx].astype(np.float32)
                     
                     # Dequantize
