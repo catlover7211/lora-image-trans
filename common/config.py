@@ -11,8 +11,8 @@ TYPE_JPEG = 0x01
 TYPE_CS = 0x02  # Compressed Sensing
 
 # Image settings
-DEFAULT_WIDTH = 16*5
-DEFAULT_HEIGHT = 9*5
+DEFAULT_WIDTH = 16*7
+DEFAULT_HEIGHT = 9*7
 DEFAULT_JPEG_QUALITY = 85
 
 # Compressed Sensing settings
