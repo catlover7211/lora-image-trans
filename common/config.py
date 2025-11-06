@@ -11,13 +11,13 @@ TYPE_JPEG = 0x01
 TYPE_CS = 0x02  # Compressed Sensing
 
 # Image settings
-DEFAULT_WIDTH = 16*100
-DEFAULT_HEIGHT = 9*100
+DEFAULT_WIDTH = 16*10
+DEFAULT_HEIGHT = 9*10
 DEFAULT_JPEG_QUALITY = 85
 
 # Compressed Sensing settings
 CS_MEASUREMENT_RATE = 0.01  # 1% sampling rate
-CS_BLOCK_SIZE = 8  # 8x8 pixel blocks
+CS_BLOCK_SIZE = 16  # 8x8 pixel blocks
 
 # Buffer settings
 MAX_FRAME_SIZE = 65535  # Maximum 2^16-1 bytes per frame
