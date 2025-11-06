@@ -21,7 +21,7 @@ CS_BLOCK_SIZE = 8  # 8x8 pixel blocks
 
 # Buffer settings
 MAX_FRAME_SIZE = 65535  # Maximum 2^16-1 bytes per frame
-CHUNK_SIZE = 240  # Bytes per chunk for LoRa transmission
+CHUNK_SIZE = 120  # Bytes per chunk for LoRa transmission
 
 # Flow control settings
 INTER_FRAME_DELAY = 0.05  # Delay between frames in seconds (50ms) to prevent receiver buffer overflow
