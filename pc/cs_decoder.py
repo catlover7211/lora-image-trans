@@ -1,5 +1,6 @@
 """Compressed Sensing decoder for received images."""
 from typing import Optional
+from functools import lru_cache
 
 import cv2
 import numpy as np
@@ -60,32 +61,33 @@ class CSDecoder:
             if payload.size < expected_length:
                 return None
             
-            # Reconstruct image
-            reconstructed = np.zeros((padded_h, padded_w), dtype=np.float32)
-            
-            block_idx: int = 0
-            for i in range(0, padded_h, block_size):
-                for j in range(0, padded_w, block_size):
-                    # Extract measurements for this block
-                    start_idx: int = int(block_idx * measurements_per_block)
-                    end_idx: int = start_idx + int(measurements_per_block)
-                    measurements = payload[start_idx:end_idx].astype(np.float32)
-                    
-                    # Dequantize
-                    dequantized = (measurements - 128) * 16.0
-                    
-                    # Reconstruct DCT coefficients (fill with zeros for missing coefficients)
-                    dct_block = np.zeros(block_size * block_size, dtype=np.float32)
-                    dct_block[:len(dequantized)] = dequantized
-                    
-                    # Reverse zigzag scan
-                    dct_2d = self._inverse_zigzag_scan(dct_block, block_size)
-                    
-                    # Apply inverse DCT
-                    block = cv2.idct(dct_2d)
-                    
-                    reconstructed[i:i+block_size, j:j+block_size] = block
-                    block_idx += 1
+            # Prepare reshaped view: (total_blocks, K)
+            K = measurements_per_block
+            payload = payload[:expected_length]
+            meas2d = payload.reshape((total_blocks, K)).astype(np.float32)
+
+            # Dequantize all at once
+            deq2d = (meas2d - 128.0) * 16.0
+
+            # Precompute zigzag indices and DCT basis
+            zz_idx = _zigzag_indices(block_size)
+            C = _dct_basis(block_size)
+
+            # Scatter dequantized coefficients into flat DCT arrays for all blocks
+            n = block_size * block_size
+            dct_flat = np.zeros((total_blocks, n), dtype=np.float32)
+            dct_flat[np.arange(total_blocks)[:, None], zz_idx[:K]] = deq2d
+            dct_blocks = dct_flat.reshape((total_blocks, block_size, block_size))
+
+            # Batched IDCT: C.T @ block @ C
+            blocks = np.einsum('ij,bjk,kl->bil', C.T, dct_blocks, C, optimize=True)
+
+            # Reassemble image from blocks
+            reconstructed = (
+                blocks.reshape(num_blocks_h, num_blocks_w, block_size, block_size)
+                .swapaxes(1, 2)
+                .reshape(padded_h, padded_w)
+            )
             
             # Crop to original size
             reconstructed = reconstructed[:height, :width]
@@ -102,33 +104,38 @@ class CSDecoder:
             print(f"CS decoding error: {e}")
             return None
     
-    def _inverse_zigzag_scan(self, flat: np.ndarray, size: int) -> np.ndarray:
-        """Perform inverse zigzag scan to reconstruct 2D block."""
-        block = np.zeros((size, size), dtype=np.float32)
-        idx = 0
-        
-        for s in range(2 * size - 1):
-            if s < size:
-                if s % 2 == 0:
-                    for i in range(s + 1):
-                        if idx < len(flat):
-                            block[s - i, i] = flat[idx]
-                            idx += 1
-                else:
-                    for i in range(s + 1):
-                        if idx < len(flat):
-                            block[i, s - i] = flat[idx]
-                            idx += 1
+@lru_cache(maxsize=None)
+def _zigzag_indices(size: int) -> np.ndarray:
+    """Return raster indices for zigzag order as a 1D numpy array of length size*size."""
+    idx = []
+    for s in range(2 * size - 1):
+        if s < size:
+            rng = range(s + 1)
+            if s % 2 == 0:
+                for i in rng:
+                    idx.append((s - i) * size + i)
             else:
-                if s % 2 == 0:
-                    for i in range(s - size + 1, size):
-                        if idx < len(flat):
-                            block[s - i, i] = flat[idx]
-                            idx += 1
-                else:
-                    for i in range(s - size + 1, size):
-                        if idx < len(flat):
-                            block[i, s - i] = flat[idx]
-                            idx += 1
-        
-        return block
+                for i in rng:
+                    idx.append(i * size + (s - i))
+        else:
+            rng = range(s - size + 1, size)
+            if s % 2 == 0:
+                for i in rng:
+                    idx.append((s - i) * size + i)
+            else:
+                for i in rng:
+                    idx.append(i * size + (s - i))
+    return np.array(idx, dtype=np.int32)
+
+@lru_cache(maxsize=None)
+def _dct_basis(n: int) -> np.ndarray:
+    """Create an orthonormal DCT-II basis matrix of size n x n."""
+    C = np.zeros((n, n), dtype=np.float32)
+    factor = np.pi / (2.0 * n)
+    scale0 = np.sqrt(1.0 / n)
+    scale = np.sqrt(2.0 / n)
+    for k in range(n):
+        s = scale0 if k == 0 else scale
+        for i in range(n):
+            C[k, i] = s * np.cos((2 * i + 1) * k * factor)
+    return C
