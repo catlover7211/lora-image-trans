@@ -36,6 +36,22 @@
 
 ## 功能特點
 
+### 運作模式
+
+1. **CCTV 模式（連續視訊）**
+   - 連續擷取並傳輸視訊串流
+   - 可調整 FPS（每秒幀數）
+   - 適用於即時監控
+   - 預設解析度：128x72
+   - 預設 JPEG 品質：85
+
+2. **照片模式（高清照片）**
+   - 擷取並傳輸單張高品質照片
+   - 高解析度：640x480
+   - 高 JPEG 品質：95
+   - 確保照片高清
+   - 支援預覽與儲存
+
 ### 編碼方式
 
 1. **JPEG 編碼**
@@ -118,39 +134,55 @@ pip install numpy opencv-python pyserial
 
 ### 2. 啟動接收端 (PC)
 
+**CCTV 模式（連續視訊）：**
 ```bash
 cd pc
 python receiver.py [--port /dev/ttyUSB0]
 ```
 
+**照片模式（單張高清照片）：**
+```bash
+cd pc
+python receiver.py --mode photo [--save photo.jpg]
+```
+
 **參數：**
+- `--mode`: 運作模式 `cctv` 或 `photo`（預設：cctv）
 - `--port`: 指定串列埠（可選，會自動偵測）
+- `--save`: 儲存接收到的照片（僅照片模式）
 
 ### 3. 啟動發送端 (Raspberry Pi)
 
-**JPEG 模式：**
+**CCTV 模式 - JPEG 編碼：**
 ```bash
 cd raspberry_pi
-python sender.py --codec jpeg --jpeg-quality 85 --fps 10 [--preview]
+python sender.py --mode cctv --codec jpeg --jpeg-quality 85 --fps 10 [--preview]
 ```
 
-**壓縮感知 (CS) 模式：**
+**CCTV 模式 - 壓縮感知 (CS) 編碼：**
 ```bash
 cd raspberry_pi
-python sender.py --codec cs --cs-rate 0.3 --fps 10 [--preview]
+python sender.py --mode cctv --codec cs --cs-rate 0.3 --fps 10 [--preview]
+```
+
+**照片模式（高清單張照片）：**
+```bash
+cd raspberry_pi
+python sender.py --mode photo [--preview]
 ```
 
 **參數：**
+- `--mode`: 運作模式 `cctv`（連續視訊）或 `photo`（單張高清照片）（預設：cctv）
 - `--port`: 指定串列埠（可選）
 - `--camera`: 攝影機索引（預設：0）
-- `--width`: 影像寬度（預設：80）
-- `--height`: 影像高度（預設：45）
+- `--width`: 影像寬度（CCTV 模式預設：128，照片模式預設：640）
+- `--height`: 影像高度（CCTV 模式預設：72，照片模式預設：480）
 - `--codec`: 編碼方式 `jpeg` 或 `cs`（預設：jpeg）
-- `--jpeg-quality`: JPEG 品質 1-100（預設：85）
+- `--jpeg-quality`: JPEG 品質 1-100（CCTV 模式預設：85，照片模式預設：95）
 - `--cs-rate`: CS 採樣率 0.0-1.0（預設：0.05）
 - `--cs-block`: CS 區塊大小（預設：8）
-- `--fps`: 目標 FPS（預設：10）
-- `--inter-frame-delay`: 幀間延遲秒數（預設：0.05），用於防止接收端緩衝溢位
+- `--fps`: 目標 FPS，僅用於 CCTV 模式（預設：10）
+- `--inter-frame-delay`: 幀間延遲秒數（預設：0.005），用於防止接收端緩衝溢位
 - `--preview`: 顯示預覽視窗
 
 ## 設定調整
@@ -181,17 +213,33 @@ INTER_FRAME_DELAY = 0.05    # 幀間延遲（秒），防止接收端緩衝溢�
 
 ## 效能調校
 
-### 增加傳輸速度
+### CCTV 模式調校
+
+#### 增加傳輸速度
 1. 降低解析度：`--width 160 --height 120`
 2. 降低 JPEG 品質：`--jpeg-quality 70`
 3. 使用 CS 編碼並降低採樣率：`--codec cs --cs-rate 0.2`
 4. 提高 FPS：`--fps 15`
 
-### 改善影像品質
+#### 改善影像品質
 1. 提高解析度：`--width 640 --height 480`
 2. 提高 JPEG 品質：`--jpeg-quality 95`
 3. 提高 CS 採樣率：`--cs-rate 0.5`
 4. 降低 FPS：`--fps 5`
+
+### 照片模式調校
+
+照片模式已針對高品質進行最佳化（640x480，品質 95），但您可以：
+
+#### 進一步提升品質
+```bash
+python sender.py --mode photo --width 1280 --height 720 --jpeg-quality 98
+```
+
+#### 降低傳輸時間（犧牲品質）
+```bash
+python sender.py --mode photo --width 320 --height 240 --jpeg-quality 90
+```
 
 ## 故障排除
 

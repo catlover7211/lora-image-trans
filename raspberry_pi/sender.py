@@ -21,27 +21,30 @@ from serial_comm import SerialComm
 from common.protocol import encode_frame, TYPE_JPEG, TYPE_CS
 from common.config import (
     DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_JPEG_QUALITY,
-    WINDOW_TITLE_SENDER, CS_MEASUREMENT_RATE, CS_BLOCK_SIZE,
-    INTER_FRAME_DELAY
+    WINDOW_TITLE_SENDER, WINDOW_TITLE_PHOTO_SENDER,
+    CS_MEASUREMENT_RATE, CS_BLOCK_SIZE,
+    INTER_FRAME_DELAY,
+    MODE_CCTV, MODE_PHOTO, PHOTO_WIDTH, PHOTO_HEIGHT, PHOTO_JPEG_QUALITY
 )
 
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Raspberry Pi CCTV Sender')
+    parser = argparse.ArgumentParser(description='Raspberry Pi Image Sender')
+    parser.add_argument('--mode', type=str, choices=['cctv', 'photo'], default='cctv',
+                        help='Operating mode: cctv (continuous video) or photo (single high-quality image) (default: cctv)')
     parser.add_argument('--port', type=str, help='Serial port (auto-detect if not specified)')
     parser.add_argument('--camera', type=int, default=0, help='Camera index (default: 0)')
-    parser.add_argument('--width', type=int, default=DEFAULT_WIDTH, help=f'Image width (default: {DEFAULT_WIDTH})')
-    parser.add_argument('--height', type=int, default=DEFAULT_HEIGHT, help=f'Image height (default: {DEFAULT_HEIGHT})')
+    parser.add_argument('--width', type=int, help='Image width (auto-selected based on mode if not specified)')
+    parser.add_argument('--height', type=int, help='Image height (auto-selected based on mode if not specified)')
     parser.add_argument('--codec', type=str, choices=['jpeg', 'cs'], default='jpeg',
                         help='Encoding method: jpeg or cs (Compressed Sensing) (default: jpeg)')
-    parser.add_argument('--jpeg-quality', type=int, default=DEFAULT_JPEG_QUALITY,
-                        help=f'JPEG quality 1-100 (default: {DEFAULT_JPEG_QUALITY})')
+    parser.add_argument('--jpeg-quality', type=int, help='JPEG quality 1-100 (auto-selected based on mode if not specified)')
     parser.add_argument('--cs-rate', type=float, default=CS_MEASUREMENT_RATE,
                         help=f'CS measurement rate 0.0-1.0 (default: {CS_MEASUREMENT_RATE})')
     parser.add_argument('--cs-block', type=int, default=CS_BLOCK_SIZE,
                         help=f'CS block size (default: {CS_BLOCK_SIZE})')
-    parser.add_argument('--fps', type=float, default=10.0, help='Target FPS (default: 10.0)')
+    parser.add_argument('--fps', type=float, default=10.0, help='Target FPS for CCTV mode (default: 10.0)')
     parser.add_argument('--inter-frame-delay', type=float, default=INTER_FRAME_DELAY,
                         help=f'Delay between frames in seconds to prevent receiver overflow (default: {INTER_FRAME_DELAY})')
     parser.add_argument('--chunk-delay-ms', type=float, default=0.0,
@@ -54,24 +57,37 @@ def main():
     """Main application loop."""
     args = parse_args()
     
+    # Set mode-specific defaults
+    if args.mode == MODE_PHOTO:
+        width = args.width if args.width else PHOTO_WIDTH
+        height = args.height if args.height else PHOTO_HEIGHT
+        jpeg_quality = args.jpeg_quality if args.jpeg_quality else PHOTO_JPEG_QUALITY
+        window_title = WINDOW_TITLE_PHOTO_SENDER
+    else:  # MODE_CCTV
+        width = args.width if args.width else DEFAULT_WIDTH
+        height = args.height if args.height else DEFAULT_HEIGHT
+        jpeg_quality = args.jpeg_quality if args.jpeg_quality else DEFAULT_JPEG_QUALITY
+        window_title = WINDOW_TITLE_SENDER
+    
     print("=" * 60)
-    print("Raspberry Pi CCTV Sender")
+    print(f"Raspberry Pi Image Sender - {args.mode.upper()} Mode")
     print("=" * 60)
     print(f"Codec: {args.codec.upper()}")
-    print(f"Resolution: {args.width}x{args.height}")
-    print(f"Target FPS: {args.fps}")
+    print(f"Resolution: {width}x{height}")
+    if args.mode == MODE_CCTV:
+        print(f"Target FPS: {args.fps}")
     
     # Initialize camera
-    camera = CameraCapture(camera_index=args.camera, width=args.width, height=args.height)
+    camera = CameraCapture(camera_index=args.camera, width=width, height=height)
     if not camera.open():
         print("Failed to open camera")
         return
     
     # Initialize encoder
     if args.codec == 'jpeg':
-        encoder = JPEGEncoder(quality=args.jpeg_quality)
+        encoder = JPEGEncoder(quality=jpeg_quality)
         frame_type = TYPE_JPEG
-        print(f"JPEG Quality: {args.jpeg_quality}")
+        print(f"JPEG Quality: {jpeg_quality}")
     else:  # cs
         encoder = CSEncoder(measurement_rate=args.cs_rate, block_size=args.cs_block)
         frame_type = TYPE_CS
@@ -95,9 +111,95 @@ def main():
         print(f"Inter-frame delay: {args.inter_frame_delay:.3f}s")
     if args.chunk_delay_ms > 0:
         print(f"Chunk delay: {args.chunk_delay_ms:.3f}ms")
-    print("Press 'q' in preview window or Ctrl+C to quit")
+    
+    if args.mode == MODE_PHOTO:
+        print("Press 'q' in preview window or Ctrl+C to capture photo")
+    else:
+        print("Press 'q' in preview window or Ctrl+C to quit")
     print("=" * 60)
     
+    # Photo mode: capture and send single image
+    if args.mode == MODE_PHOTO:
+        try:
+            # Wait for user to be ready if preview is enabled
+            if args.preview:
+                print("\nShowing camera preview...")
+                print("Press 'q' to capture photo or Ctrl+C to cancel")
+                while True:
+                    frame = camera.capture()
+                    if frame is None:
+                        print("Warning: Failed to capture preview frame")
+                        time.sleep(0.1)
+                        continue
+                    
+                    cv2.imshow(window_title, frame)
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        break
+            else:
+                # Small delay to let camera stabilize
+                time.sleep(0.5)
+            
+            # Capture the photo
+            print("\nCapturing photo...")
+            frame = camera.capture()
+            if frame is None:
+                print("Error: Failed to capture photo")
+                camera.close()
+                serial_comm.close()
+                if args.preview:
+                    cv2.destroyAllWindows()
+                return
+            
+            # Show captured image if preview enabled
+            if args.preview:
+                cv2.imshow(window_title, frame)
+                print("Photo captured! Press any key to send...")
+                cv2.waitKey(0)
+            
+            # Encode frame
+            print("Encoding photo...")
+            encoded_data = encoder.encode(frame)
+            if encoded_data is None:
+                print("Error: Failed to encode photo")
+                camera.close()
+                serial_comm.close()
+                if args.preview:
+                    cv2.destroyAllWindows()
+                return
+            
+            # Build protocol frame
+            try:
+                protocol_frame = encode_frame(frame_type, encoded_data)
+            except ValueError as e:
+                print(f"Error: Failed to build frame: {e}")
+                camera.close()
+                serial_comm.close()
+                if args.preview:
+                    cv2.destroyAllWindows()
+                return
+            
+            # Send via serial
+            print(f"Sending photo ({len(encoded_data)} bytes encoded, {len(protocol_frame)} bytes total)...")
+            if not serial_comm.send(protocol_frame):
+                print("Error: Failed to send photo")
+            else:
+                print("Photo sent successfully!")
+        
+        except KeyboardInterrupt:
+            print("\n\nCancelled by user")
+        
+        finally:
+            # Cleanup
+            print("\nCleaning up...")
+            camera.close()
+            serial_comm.close()
+            if args.preview:
+                cv2.destroyAllWindows()
+        
+        return
+    
+    # CCTV mode: continuous capture (original behavior)
     frame_interval = 1.0 / args.fps if args.fps > 0 else 0.0
     last_frame_time = 0.0
     frame_count = 0
@@ -124,7 +226,7 @@ def main():
             
             # Show preview if requested
             if args.preview:
-                cv2.imshow(WINDOW_TITLE_SENDER, frame)
+                cv2.imshow(window_title, frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
                     print("\nQuit requested by user")
