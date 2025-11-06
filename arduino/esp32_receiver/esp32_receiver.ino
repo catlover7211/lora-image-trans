@@ -72,9 +72,14 @@ void forward_complete_frames() {
 
     int start_idx = find_frame_start();
     if (start_idx < 0) {
-      // Keep last byte in case start marker is split across chunks
-      frame_buffer[0] = frame_buffer[frame_buffer_pos - 1];
-      frame_buffer_pos = 1;
+      // Keep last byte only if it could be the beginning of FRAME_START
+      uint8_t last_byte = frame_buffer[frame_buffer_pos - 1];
+      if (last_byte == FRAME_START[0]) {
+        frame_buffer[0] = last_byte;
+        frame_buffer_pos = 1;
+      } else {
+        frame_buffer_pos = 0;
+      }
       return;
     }
 
@@ -90,7 +95,7 @@ void forward_complete_frames() {
     size_t payload_length = (static_cast<size_t>(frame_buffer[3]) << 8) | frame_buffer[4];
     if (payload_length == 0 || payload_length > MAX_FRAME_SIZE) {
       Serial.println("\nWARN: Invalid frame length, skipping");
-      shift_frame_buffer(2);
+      shift_frame_buffer(1);
       continue;
     }
 
@@ -108,7 +113,7 @@ void forward_complete_frames() {
     if (frame_buffer[frame_length - 2] != FRAME_END[0] ||
         frame_buffer[frame_length - 1] != FRAME_END[1]) {
       Serial.println("\nWARN: Frame end mismatch, searching next start");
-      shift_frame_buffer(2);
+      shift_frame_buffer(1);
       continue;
     }
 
