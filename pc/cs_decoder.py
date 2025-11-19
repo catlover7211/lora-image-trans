@@ -13,11 +13,12 @@ class CSDecoder:
         """Initialize CS decoder."""
         pass
     
-    def decode(self, data: bytes) -> Optional[np.ndarray]:
+    def decode(self, data: bytes, iterations: int = 3) -> Optional[np.ndarray]:
         """Decode CS bytes to image array.
         
         Args:
             data: CS encoded bytes
+            iterations: Number of GAP reconstruction iterations (default: 3)
             
         Returns:
             BGR grayscale image or None on failure
@@ -79,6 +80,7 @@ class CSDecoder:
             dct_flat[np.arange(total_blocks)[:, None], zz_idx[:K]] = deq2d
             dct_blocks = dct_flat.reshape((total_blocks, block_size, block_size))
 
+            # Initial reconstruction (Zero-filling IDCT)
             # Batched IDCT: C.T @ block @ C
             blocks = np.einsum('ij,bjk,kl->bil', C.T, dct_blocks, C, optimize=True)
 
@@ -89,6 +91,64 @@ class CSDecoder:
                 .reshape(padded_h, padded_w)
             )
             
+            # GAP (Generalized Alternating Projection) Reconstruction
+            # Inspired by DeSCI (https://github.com/liuyang12/DeSCI)
+            # We use a simplified GAP-TV/Denoise approach for real-time performance.
+            if iterations > 0:
+                curr_im = reconstructed.copy()
+                
+                # Pre-calculate mask for data consistency
+                # We need to enforce the measured coefficients
+                # The mask is 1 for unmeasured, 0 for measured (because we replace measured)
+                # Actually we just need to know which indices are measured: zz_idx[:K]
+                
+                for _ in range(iterations):
+                    # 1. Denoise step (Projection onto signal manifold)
+                    # Use Fast Non-Local Means as a proxy for WNNM (DeSCI) or TV
+                    # For small images (128x72), this is reasonably fast
+                    denoised = cv2.fastNlMeansDenoising(
+                        np.clip(curr_im, 0, 255).astype(np.uint8), 
+                        None, 
+                        h=10, 
+                        templateWindowSize=7, 
+                        searchWindowSize=21
+                    ).astype(np.float32)
+                    
+                    # 2. Data Consistency step (Projection onto measurement subspace)
+                    # Transform denoised image to DCT domain
+                    
+                    # Split into blocks
+                    d_blocks = (
+                        denoised.reshape(num_blocks_h, block_size, num_blocks_w, block_size)
+                        .swapaxes(1, 2)
+                        .reshape(total_blocks, block_size, block_size)
+                    )
+                    
+                    # Forward DCT: C @ block @ C.T
+                    d_dct_blocks = np.einsum('ij,bjk,kl->bil', C, d_blocks, C.T, optimize=True)
+                    
+                    # Flatten
+                    d_dct_flat = d_dct_blocks.reshape(total_blocks, n)
+                    
+                    # Enforce measurements: Replace the first K zigzag coefficients with measured ones
+                    # We use the original dequantized values 'deq2d'
+                    d_dct_flat[np.arange(total_blocks)[:, None], zz_idx[:K]] = deq2d
+                    
+                    # Reshape back to blocks
+                    d_dct_blocks_enforced = d_dct_flat.reshape((total_blocks, block_size, block_size))
+                    
+                    # Inverse DCT
+                    blocks_enforced = np.einsum('ij,bjk,kl->bil', C.T, d_dct_blocks_enforced, C, optimize=True)
+                    
+                    # Reassemble
+                    curr_im = (
+                        blocks_enforced.reshape(num_blocks_h, num_blocks_w, block_size, block_size)
+                        .swapaxes(1, 2)
+                        .reshape(padded_h, padded_w)
+                    )
+                
+                reconstructed = curr_im
+
             # Crop to original size
             reconstructed = reconstructed[:height, :width]
             

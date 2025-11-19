@@ -28,6 +28,8 @@ def parse_args() -> argparse.Namespace:
                         help='Operating mode: cctv (continuous video) or photo (single image) (default: cctv)')
     parser.add_argument('--port', type=str, help='Serial port (auto-detect if not specified)')
     parser.add_argument('--save', type=str, help='Save received photo to file (photo mode only)')
+    parser.add_argument('--gap-iters', type=int, default=0,
+                        help='Number of GAP reconstruction iterations for CS (default: 0)')
     parser.add_argument('--debug-buffer', action='store_true',
                         help='Print serial buffer usage when backlog grows (diagnostics)')
     return parser.parse_args()
@@ -95,7 +97,7 @@ def main():
             if frame_type == TYPE_JPEG:
                 image = jpeg_decoder.decode(data)
             elif frame_type == TYPE_CS:
-                image = cs_decoder.decode(data)
+                image = cs_decoder.decode(data, iterations=args.gap_iters)
             else:
                 print(f"Error: Unknown frame type: {frame_type}")
                 serial_comm.close()
@@ -201,7 +203,7 @@ def main():
                 image = jpeg_decoder.decode(data)
                 jpeg_count += 1
             elif frame_type == TYPE_CS:
-                image = cs_decoder.decode(data)
+                image = cs_decoder.decode(data, iterations=args.gap_iters)
                 cs_count += 1
             else:
                 error_count += 1
