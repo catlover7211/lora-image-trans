@@ -17,7 +17,7 @@ DEFAULT_JPEG_QUALITY = 85
 
 # Compressed Sensing settings
 CS_MEASUREMENT_RATE = 0.01  # 1% sampling rate
-CS_BLOCK_SIZE = 16  # 16x16 pixel blocks
+CS_BLOCK_SIZE = 20  # 16x16 pixel blocks
 
 # Buffer settings
 # Protocol LENGTH field is 2 bytes (uint16), so max payload is 65535 bytes.
