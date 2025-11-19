@@ -6,6 +6,7 @@ decodes them (JPEG or CS), and displays them.
 import argparse
 import sys
 import time
+import threading
 from pathlib import Path
 
 import cv2
@@ -142,10 +143,44 @@ def main():
     last_display = None
     last_buffer_warn = 0.0
     
+    # High-performance frame poller thread
+    # This thread continuously pulls frames from serial_comm into memory
+    # so the serial buffer never overflows while the main thread is busy decoding.
+    class FramePoller:
+        def __init__(self, comm):
+            self.comm = comm
+            self.latest_frame = None
+            self.lock = threading.Lock()
+            self.running = True
+            self.thread = threading.Thread(target=self._loop, daemon=True)
+            self.thread.start()
+            
+        def _loop(self):
+            while self.running:
+                frame = self.comm.receive_frame()
+                if frame:
+                    with self.lock:
+                        self.latest_frame = frame
+                else:
+                    time.sleep(0.001)
+                    
+        def get_latest(self):
+            with self.lock:
+                frame = self.latest_frame
+                self.latest_frame = None # Consume it
+                return frame
+                
+        def stop(self):
+            self.running = False
+            self.thread.join(timeout=1.0)
+
+    poller = FramePoller(serial_comm)
+
     try:
         while True:
-            # Receive frame
-            frame_bytes = serial_comm.receive_frame()
+            # Receive frame from poller (memory) instead of serial (IO)
+            frame_bytes = poller.get_latest()
+            
             if frame_bytes is None:
                 # No complete frame yet, check display
                 if last_display is not None:
@@ -246,6 +281,8 @@ def main():
     finally:
         # Cleanup
         print("\nCleaning up...")
+        if 'poller' in locals():
+            poller.stop()
         serial_comm.close()
         cv2.destroyAllWindows()
         
