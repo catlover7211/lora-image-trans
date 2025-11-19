@@ -82,7 +82,7 @@ def parse_args() -> argparse.Namespace:
                         help=f'CS measurement rate 0.0-1.0 (default: {CS_MEASUREMENT_RATE})')
     parser.add_argument('--cs-block', type=int, default=CS_BLOCK_SIZE,
                         help=f'CS block size (default: {CS_BLOCK_SIZE})')
-    parser.add_argument('--fps', type=float, default=8.0, help='Target FPS for CCTV mode (default: 10.0)')
+    parser.add_argument('--fps', type=float, default=5.0, help='Target FPS for CCTV mode (default: 10.0)')
     parser.add_argument('--inter-frame-delay', type=float, default=INTER_FRAME_DELAY,
                         help=f'Delay between frames in seconds to prevent receiver overflow (default: {INTER_FRAME_DELAY})')
     parser.add_argument('--chunk-delay-ms', type=float, default=0.0,
