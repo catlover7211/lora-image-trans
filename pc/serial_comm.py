@@ -93,30 +93,33 @@ class SerialComm:
     def _reader_loop(self) -> None:
         """Continuously read from serial into the buffer."""
         assert self.ser is not None
-        # Choose a moderate read size; in_waiting preferred when available
         while self._rx_running:
             try:
-                n = self.ser.in_waiting if self.ser is not None else 0
-                if n and n > 0:
+                # Use in_waiting to avoid blocking read with long timeout
+                n = self.ser.in_waiting
+                if n > 0:
                     data = self.ser.read(n)
+                    if data:
+                        with self._lock:
+                            self._buffer.extend(data)
+                            # Trim if buffer grows too large
+                            if len(self._buffer) > self._max_buffer:
+                                # Keep last 2 bytes in case they contain partial start marker
+                                tail = bytes(self._buffer[-2:])
+                                self._buffer.clear()
+                                self._buffer.extend(tail)
                 else:
-                    # Small blocking read to reduce spin when quiet
-                    data = self.ser.read(256)
-                if data:
-                    with self._lock:
-                        self._buffer.extend(data)
-                        # Trim if buffer grows too large
-                        if len(self._buffer) > self._max_buffer:
-                            # Keep last 2 bytes in case they contain partial start marker
-                            tail = bytes(self._buffer[-2:])
-                            self._buffer.clear()
-                            self._buffer.extend(tail)
-                else:
-                    # No data arrived within timeout; yield
+                    # No data available, sleep briefly to yield CPU
                     time.sleep(0.001)
             except serial.SerialException as e:
                 # On read error, pause briefly but keep loop alive to allow recovery
                 print(f"Serial read error: {e}")
+                time.sleep(0.05)
+            except OSError as e:
+                print(f"OS error in serial read: {e}")
+                time.sleep(0.05)
+            except Exception as e:
+                print(f"Unexpected error in serial read: {e}")
                 time.sleep(0.05)
     
     def receive_frame(self) -> Optional[bytes]:

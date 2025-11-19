@@ -225,7 +225,7 @@ def main():
             frame_count += 1
             
             # Print status every 10 frames
-            if frame_count % 10 == 0:
+            if frame_count % 10 == 0 or frame_count < 5:
                 elapsed = time.time() - start_time
                 fps = frame_count / elapsed if elapsed > 0 else 0
                 error_rate = (error_count / (frame_count + error_count) * 100) if (frame_count + error_count) > 0 else 0
