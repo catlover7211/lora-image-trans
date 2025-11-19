@@ -13,6 +13,8 @@ import serial.tools.list_ports
 
 from common.config import BAUD_RATE, SERIAL_TIMEOUT, FRAME_START, FRAME_END, MAX_FRAME_SIZE
 
+BLOCKED_PORTS = {"/dev/cu.usbserial-10"}
+
 
 class SerialComm:
     """Handles serial communication with ESP32."""
@@ -46,11 +48,16 @@ class SerialComm:
         ports = serial.tools.list_ports.comports()
         for port in ports:
             # Prefer USB serial devices
+            if port.device in BLOCKED_PORTS:
+                continue
             if 'USB' in port.description or 'ACM' in port.device or 'USB' in port.device:
                 return port.device
         # Return first available port if no USB device found
         if ports:
-            return ports[0].device
+            for port in ports:
+                if port.device in BLOCKED_PORTS:
+                    continue
+                return port.device
         return None
 
     def open(self) -> bool:
