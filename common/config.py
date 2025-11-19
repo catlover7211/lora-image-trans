@@ -16,7 +16,7 @@ DEFAULT_HEIGHT = 9*8
 DEFAULT_JPEG_QUALITY = 85
 
 # Compressed Sensing settings
-CS_MEASUREMENT_RATE = 0.1  # 1% sampling rate
+CS_MEASUREMENT_RATE = 0.05  # 1% sampling rate
 CS_BLOCK_SIZE = 16  # 16x16 pixel blocks
 
 # Buffer settings
