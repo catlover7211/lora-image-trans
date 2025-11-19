@@ -21,14 +21,18 @@
 #define RXD2 16
 #define TXD2 17
 
-// 緩衝區大小 - 只需要小型緩衝區用於批次轉發
-#define RELAY_BUFFER_SIZE 512
+// 緩衝區大小 - 以環形緩衝平衡 USB 與 LoRa 速率
+#define RELAY_BUFFER_SIZE 4096
+#define USB_WRITE_GUARD_US 30
 
 // 使用 ESP32 的第二個串口連接 LoRa 模組
 HardwareSerial LoRaSerial(2);
 
-// 緩衝區
+// 環形緩衝
 uint8_t relay_buffer[RELAY_BUFFER_SIZE];
+size_t relay_head = 0;
+size_t relay_tail = 0;
+size_t relay_fill = 0;
 
 // Statistics
 unsigned long bytes_forwarded = 0;
@@ -45,8 +49,8 @@ void setup() {
   LoRaSerial.begin(115200, SERIAL_8N1, RXD2, TXD2);
 
   // 設定合理的超時
-  Serial.setTimeout(10);
-  LoRaSerial.setTimeout(10);
+  Serial.setTimeout(0);
+  LoRaSerial.setTimeout(0);
 
   // 等待序列埠穩定
   delay(1000);
@@ -59,20 +63,45 @@ void setup() {
   Serial.println("Frame reconstruction handled by PC");
 }
 
-void loop() {
-  // ========================================================================
-  // 簡單的資料中繼：從 LoRa 接收資料並立即轉發到 USB Serial
-  // ========================================================================
-  if (LoRaSerial.available() > 0) {
-    // 批次讀取以提升效率
-    size_t bytes_read = LoRaSerial.readBytes(relay_buffer, RELAY_BUFFER_SIZE);
+inline size_t relay_free() {
+  return RELAY_BUFFER_SIZE - relay_fill;
+}
 
-    if (bytes_read > 0) {
-      // 直接轉發到 PC，不進行幀驗證或緩衝
-      Serial.write(relay_buffer, bytes_read);
-      Serial.flush();
-      bytes_forwarded += bytes_read;
+void pump_from_lora() {
+  while (LoRaSerial.available() > 0 && relay_free() > 0) {
+    relay_buffer[relay_head] = LoRaSerial.read();
+    relay_head = (relay_head + 1) % RELAY_BUFFER_SIZE;
+    relay_fill++;
+  }
+}
+
+void pump_to_usb() {
+  size_t writable = Serial.availableForWrite();
+  while (relay_fill > 0 && writable > 0) {
+    size_t contiguous = RELAY_BUFFER_SIZE - relay_tail;
+    size_t chunk = relay_fill < contiguous ? relay_fill : contiguous;
+    if (chunk > writable) {
+      chunk = writable;
     }
+    if (chunk == 0) {
+      break;
+    }
+    Serial.write(relay_buffer + relay_tail, chunk);
+    relay_tail = (relay_tail + chunk) % RELAY_BUFFER_SIZE;
+    relay_fill -= chunk;
+    writable -= chunk;
+    bytes_forwarded += chunk;
+  }
+}
+
+void loop() {
+  pump_from_lora();
+  pump_to_usb();
+
+  if (relay_fill == RELAY_BUFFER_SIZE) {
+    // 以丟棄最舊資料的方式回復，避免完全阻塞
+    relay_tail = (relay_tail + RELAY_BUFFER_SIZE / 4) % RELAY_BUFFER_SIZE;
+    relay_fill -= RELAY_BUFFER_SIZE / 4;
   }
 
   // Print statistics every 60 seconds
@@ -84,6 +113,9 @@ void loop() {
     last_stats_time = current_time;
   }
 
-  // 短暫延遲避免過度佔用 CPU
-  delayMicroseconds(500);
+  if (relay_fill == 0 && LoRaSerial.available() == 0) {
+    delayMicroseconds(200);
+  } else {
+    delayMicroseconds(USB_WRITE_GUARD_US);
+  }
 }

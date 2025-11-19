@@ -276,6 +276,45 @@ esp32_receiver.ino (中繼模式)
 - 提高系統可靠性和資料吞吐量
 - 降低幀丟失率
 
+## 吞吐量優化藍圖（2025Q4）
+
+為了在現有架構上擠出更高的有效頻寬，以下為雙端（ESP32 與 Python）協同的優化規劃，後續實作會依序落地：
+
+### 1. 串列層升級與參數化
+
+- **波特率升級**：`common/config.py` 內預設 BAUD_RATE 從 115200 調高至 921600（硬體允許時），並允許 CLI 參數覆寫，確保 Raspberry Pi ↔ ESP32 以及 ESP32 ↔ PC 的串列層不再成為瓶頸。
+- **Chunk 與視窗常數**：新增 `USB_TX_WINDOW`、`LORA_TX_WINDOW`、`FLOW_CTRL_WATERMARK` 等常數，集中管理 USB/LoRa 緩衝大小與水位線，讓 Arduino 與 Python 可以共用同一組設定，避免 magic number 分散各處。
+- **自適應 chunk size**：`raspberry_pi/serial_comm.py` 根據 ESP32 回報的可用視窗動態調整 chunk（128~1024 bytes），取代固定 500 bytes，兼顧延遲與吞吐。
+
+### 2. ESP32 發送端（`esp32_sender.ino`）
+
+- **雙緩衝 + state machine**：以 2 × 4096 bytes 的 DMA-friendly buffer 輪替，`Serial.readBytes()` 直接填滿當前 buffer，切換時透過非阻塞 `LoRaSerial.write()` 將資料推進；`Serial.flush()` 僅保留在錯誤/重置情境。
+- **LoRa TX 追蹤**：利用 `LoRaSerial.availableForWrite()` 計算剩餘視窗，實作簡單的 credit counter。每當視窗回升至水位線以上時，回傳一個 `CTRL_CREDIT` 訊息（ASCII 行或 0xF0 控制幀）到 Raspberry Pi，告知可再送 N bytes。
+- **錯誤自動恢復**：維持既有的 FRAME_START 重新同步邏輯，但改寫為「收到 `CTRL_RESET` 指令即可手動清空」，供開發測試時遠端觸發。
+
+### 3. ESP32 接收端（`esp32_receiver.ino`）
+
+- **增大中繼緩衝**：改用 2048 bytes ring buffer，並採用 `while (LoRaSerial.available() && Serial.availableForWrite())` 的雙向推進，減少 `delayMicroseconds()` 依賴。
+- **USB 傳輸優化**：改用 `Serial.write()` + `Serial.availableForWrite()` 分批送出，搭配 `yield()` 讓 FreeRTOS scheduler 處理背景工作，避免長時間佔用 CPU。
+- **統計回覆**：每秒輸出 JSON 風格統計（bytes、溫度、重試），讓 PC 端 Python 可以解析並決定後續是否調整 frame pacing。
+
+### 4. Python 端（Raspberry Pi 與 PC）
+
+- **Raspberry Pi `SerialComm`**：
+   - 新增背景 reader 解析 ESP32 `CTRL_*` 訊息，維護 `credits` 計數；`send()` 會在 credits 耗盡時阻塞（或等待條件），取代硬式 `inter_frame_delay`。
+   - 支援 `--target-bitrate` / `--max-latency` 參數，讓 `sender.py` 可以依場景調整品質或 fps。
+- **PC `SerialComm`**：
+   - 保留現有背景緩衝，額外提供簡易 API 讓上層得知串列 backlog（`get_buffer_level()`），並在視窗不足時回傳建議延遲給使用者。
+   - 解析來自 ESP32 接收端的統計訊息，寫入日誌或顯示在 CLI UI。
+
+### 5. 驗證與量測
+
+- **回歸測試**：沿用 `tests/test_inter_frame_delay.py`、`tests/test_relay_mode.py`，新增 mock credit provider 以測試 flow control 邏輯。
+- **端到端量測腳本**：提供 `examples/jitter_benchmark.py`，自動收集 FPS、平均延遲、drop 率並輸出 CSV。
+- **Fallback 設計**：若硬體無法支援高波特率或控制訊息，CLI 提供 `--legacy-mode` 參數，將行為退回舊有固定 chunk/delay 策略。
+
+此藍圖將作為後續程式調整的依據：先落實設定檔與 ESP32 儲傳邏輯，再更新 Python 端流程，最後以文件與測試收尾。
+
 ## 效能考量
 
 ### 瓶頸分析

@@ -199,6 +199,15 @@ class SerialComm:
                 self._rx_thread = None
             self.ser.close()
             self.ser = None
+
+    def get_buffer_level(self) -> int:
+        """Return current buffered bytes awaiting parsing."""
+        with self._lock:
+            return len(self._buffer)
+
+    def get_buffer_capacity(self) -> int:
+        """Return configured maximum buffer size."""
+        return self._max_buffer
     
     def __enter__(self):
         """Context manager entry."""

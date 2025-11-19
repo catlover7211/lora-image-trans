@@ -184,6 +184,14 @@ python sender.py --mode photo [--preview]
 - `--fps`: 目標 FPS，僅用於 CCTV 模式（預設：10）
 - `--inter-frame-delay`: 幀間延遲秒數（預設：0.005），用於防止接收端緩衝溢位
 - `--preview`: 顯示預覽視窗
+- `--chunk-delay-ms`: 逐區塊固定延遲（毫秒），預設 0（啟用自動流量控制視窗）
+
+### 4. 流量控制與診斷
+
+- **動態流量控制**：發送端 ESP32 會定期送出 `[FC] backlog=...` 文字訊息，Raspberry Pi 上的 `serial_comm.py` 會在背景執行緒解析並依 backlog 自動調整 chunk 大小與幀間延遲（仍維持 115200 bps）。
+- **自訂邊界**：若仍希望固定延遲，可透過 `--chunk-delay-ms` 或 `--inter-frame-delay` 覆寫；設定為 0 代表完全交給自動調節。
+- **接收端緩衝監控**：PC 端 `receiver.py` 新增 `--debug-buffer` 參數，可在串流時輸出序列緩衝使用率，便於判斷是否需要降低 FPS/解析度。
+- **最佳化提示**：當 Raspberry Pi 觀察到 backlog 過大時會自動放慢幀速；若長時間 backlog 為 0，可酌情降低 `--inter-frame-delay` 以最多化吞吐。
 
 ## 設定調整
 

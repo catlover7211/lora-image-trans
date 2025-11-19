@@ -28,6 +28,8 @@ def parse_args() -> argparse.Namespace:
                         help='Operating mode: cctv (continuous video) or photo (single image) (default: cctv)')
     parser.add_argument('--port', type=str, help='Serial port (auto-detect if not specified)')
     parser.add_argument('--save', type=str, help='Save received photo to file (photo mode only)')
+    parser.add_argument('--debug-buffer', action='store_true',
+                        help='Print serial buffer usage when backlog grows (diagnostics)')
     return parser.parse_args()
 
 
@@ -136,6 +138,7 @@ def main():
     invalid_frames = 0
     start_time = time.time()
     last_display = None
+    last_buffer_warn = 0.0
     
     try:
         while True:
@@ -148,6 +151,12 @@ def main():
                     if key == ord('q'):
                         print("\nQuit requested by user")
                         break
+                if args.debug_buffer:
+                    buf_level = serial_comm.get_buffer_level()
+                    usage = buf_level / max(1, serial_comm.get_buffer_capacity())
+                    if usage > 0.7 and time.time() - last_buffer_warn > 0.5:
+                        print(f"[SerialBuffer] usage={usage*100:.1f}% ({buf_level} bytes cached)")
+                        last_buffer_warn = time.time()
                 time.sleep(0.001)
                 continue
             
