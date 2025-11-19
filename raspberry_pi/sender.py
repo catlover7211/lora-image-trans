@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--camera', type=int, default=0, help='Camera index (default: 0)')
     parser.add_argument('--width', type=int, help='Image width (auto-selected based on mode if not specified)')
     parser.add_argument('--height', type=int, help='Image height (auto-selected based on mode if not specified)')
-    parser.add_argument('--codec', type=str, choices=['jpeg', 'cs'], default='jpeg',
+    parser.add_argument('--codec', type=str, choices=['jpeg', 'cs'], default='cs',
                         help='Encoding method: jpeg or cs (Compressed Sensing) (default: jpeg)')
     parser.add_argument('--jpeg-quality', type=int, help='JPEG quality 1-100 (auto-selected based on mode if not specified)')
     parser.add_argument('--cs-rate', type=float, default=CS_MEASUREMENT_RATE,

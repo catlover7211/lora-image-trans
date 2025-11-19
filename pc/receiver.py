@@ -203,7 +203,11 @@ def main():
                 image = jpeg_decoder.decode(data)
                 jpeg_count += 1
             elif frame_type == TYPE_CS:
+                if args.gap_iters > 0:
+                    print(f"Decoding CS frame (GAP {args.gap_iters} iters)...", end='\r', flush=True)
                 image = cs_decoder.decode(data, iterations=args.gap_iters)
+                if args.gap_iters > 0:
+                    print(" " * 40, end='\r', flush=True) # Clear line
                 cs_count += 1
             else:
                 error_count += 1

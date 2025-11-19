@@ -184,9 +184,20 @@ class SerialComm:
 
             # Verify end marker is at the expected position
             if buf[total_len - 2: total_len] != FRAME_END:
-                # Not aligned; drop first byte to resync (length is untrusted if corrupted)
+                # Not aligned or corrupted frame.
+                # Fast resync: Look for the next FRAME_START to skip ahead efficiently
+                next_start = buf.find(FRAME_START, 1)
                 with self._lock:
-                    del self._buffer[0]
+                    if next_start != -1:
+                        # Skip to next potential frame
+                        del self._buffer[:next_start]
+                    else:
+                        # No other start marker found, drop almost everything
+                        # Keep last byte if it matches first byte of FRAME_START
+                        if len(buf) > 0 and buf[-1] == FRAME_START[0]:
+                            del self._buffer[:-1]
+                        else:
+                            self._buffer.clear()
                 return None
 
             # Extract the frame and remove from buffer

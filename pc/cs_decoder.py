@@ -105,13 +105,15 @@ class CSDecoder:
                 for _ in range(iterations):
                     # 1. Denoise step (Projection onto signal manifold)
                     # Use Fast Non-Local Means as a proxy for WNNM (DeSCI) or TV
-                    # For small images (128x72), this is reasonably fast
+                    # Optimized parameters for real-time performance:
+                    # searchWindowSize reduced from 21 to 11 (significant speedup)
+                    # h (strength) reduced slightly to preserve details
                     denoised = cv2.fastNlMeansDenoising(
                         np.clip(curr_im, 0, 255).astype(np.uint8), 
                         None, 
-                        h=10, 
+                        h=8, 
                         templateWindowSize=7, 
-                        searchWindowSize=21
+                        searchWindowSize=11
                     ).astype(np.float32)
                     
                     # 2. Data Consistency step (Projection onto measurement subspace)
