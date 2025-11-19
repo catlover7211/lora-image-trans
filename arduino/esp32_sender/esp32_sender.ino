@@ -101,7 +101,7 @@ void report_flow_control() {
 void setup() {
   // 初始化 USB Serial (連接 Raspberry Pi)
   Serial.setTxBufferSize(1024);
-  Serial.setRxBufferSize(4096);
+  Serial.setRxBufferSize(16384); // Increased from 4096 to 16384 to prevent overflow
   Serial.begin(115200);
   
   // 初始化 LoRa Serial (連接 LoRa 模組)

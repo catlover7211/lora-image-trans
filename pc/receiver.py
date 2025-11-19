@@ -166,10 +166,31 @@ def main():
                 error_count += 1
                 invalid_frames += 1
                 # More detailed error logging
+                print(f"Warning: Invalid frame received (length: {len(frame_bytes)} bytes)")
                 if len(frame_bytes) >= 9:
-                    print(f"Warning: Invalid frame received (length: {len(frame_bytes)} bytes)")
-                else:
-                    print(f"Warning: Frame too short (length: {len(frame_bytes)} bytes)")
+                    # Debug: Print header and footer
+                    header = frame_bytes[:5]
+                    footer = frame_bytes[-2:]
+                    print(f"  Header: {header.hex().upper()}")
+                    print(f"  Footer: {footer.hex().upper()}")
+                    # Check CRC manually for debug
+                    try:
+                        from common.protocol import crc16
+                        payload_with_crc = frame_bytes[2:-2]
+                        if len(payload_with_crc) >= 2:
+                            crc_received = (payload_with_crc[-2] << 8) | payload_with_crc[-1]
+                            payload = payload_with_crc[:-2]
+                            crc_calc = crc16(payload)
+                            print(f"  CRC: Recv={crc_received:04X}, Calc={crc_calc:04X}")
+                            if crc_received != crc_calc:
+                                print("  -> CRC Mismatch")
+                            
+                            # Check length field
+                            data_len = (frame_bytes[3] << 8) | frame_bytes[4]
+                            real_data_len = len(payload) - 1 # minus TYPE
+                            print(f"  Length field: {data_len}, Actual payload: {real_data_len}")
+                    except Exception as e:
+                        print(f"  Debug error: {e}")
                 continue
             
             frame_type, data = result

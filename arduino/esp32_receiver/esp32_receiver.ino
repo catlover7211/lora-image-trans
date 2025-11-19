@@ -105,6 +105,7 @@ void loop() {
   }
 
   // Print statistics every 60 seconds
+  /*
   unsigned long current_time = millis();
   if (current_time - last_stats_time >= 60000) {
     Serial.print("\n--- Stats: Bytes forwarded=");
@@ -112,6 +113,7 @@ void loop() {
     Serial.println(" ---");
     last_stats_time = current_time;
   }
+  */
 
   if (relay_fill == 0 && LoRaSerial.available() == 0) {
     delayMicroseconds(200);
