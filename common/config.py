@@ -50,4 +50,4 @@ SSDV_MAX_IMAGE_ID = 256  # Maximum image ID (wraps around)
 SSDV_PACKET_DELAY = 0.15  # Delay between SSDV packets (150ms) for LoRa stability
 SSDV_WIDTH = 16*30  # SSDV recommended resolution
 SSDV_HEIGHT = 9*30
-SSDV_QUALITY = 2  # SSDV quality level 0-7 (4 = balanced)
+SSDV_QUALITY = 6  # SSDV quality level 0-7 (4 = balanced)
