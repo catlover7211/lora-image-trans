@@ -161,11 +161,11 @@ def main():
                             print(f"Image decoded successfully: {image.shape}")
                             
                             # Display image
-                            window_name = f"SSDV Image {current_image_id}"
+                            window_name = "SSDV Receiver"
                             cv2.imshow(window_name, image)
-                            print("Displaying image... Press any key to continue")
-                            cv2.waitKey(0)
-                            cv2.destroyWindow(window_name)
+                            print("Displaying image...")
+                            if (cv2.waitKey(1) & 0xFF) == ord('q'):
+                                raise KeyboardInterrupt
                             
                             # Save if requested
                             if args.auto_save:
@@ -192,9 +192,10 @@ def main():
                     if jpeg_data:
                         image = jpeg_decoder.decode(jpeg_data)
                         if image is not None:
-                            window_name = f"SSDV Image {current_image_id} (Partial)"
+                            window_name = "SSDV Receiver"
                             cv2.imshow(window_name, image)
-                            cv2.waitKey(1)
+                            if (cv2.waitKey(1) & 0xFF) == ord('q'):
+                                raise KeyboardInterrupt
     
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
