@@ -22,7 +22,7 @@ from common.protocol import encode_frame, TYPE_SSDV
 from common.ssdv import SSDVEncoder
 from common.config import (
     SSDV_WIDTH, SSDV_HEIGHT, SSDV_QUALITY, SSDV_CALLSIGN, 
-    SSDV_IMAGE_ID, SSDV_PACKET_DELAY, DEFAULT_JPEG_QUALITY
+    SSDV_IMAGE_ID, SSDV_PACKET_DELAY, SSDV_MAX_IMAGE_ID, DEFAULT_JPEG_QUALITY
 )
 
 
@@ -216,8 +216,8 @@ def main():
                 image_count += 1
                 last_capture_time = current_time
                 
-                # Increment image ID for next capture
-                ssdv_encoder.image_id = (ssdv_encoder.image_id + 1) % 256
+                # Increment image ID for next capture (wrap around at max)
+                ssdv_encoder.image_id = (ssdv_encoder.image_id + 1) % SSDV_MAX_IMAGE_ID
                 
                 # In non-continuous mode, reset detector
                 if not args.continuous and args.motion_mode == 'auto':

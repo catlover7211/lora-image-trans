@@ -153,7 +153,11 @@ class MotionDetector:
 
 
 class ManualTrigger:
-    """Manual trigger for testing without actual motion detection."""
+    """Manual trigger for testing without actual motion detection.
+    
+    Note: The should_trigger method requires current_time to be passed as a parameter.
+    Callers should pass time.time() or equivalent timestamp.
+    """
     
     def __init__(self, trigger_interval: float = 5.0):
         """Initialize manual trigger.
@@ -169,7 +173,7 @@ class ManualTrigger:
         """Check if trigger should fire.
         
         Args:
-            current_time: Current time in seconds
+            current_time: Current time in seconds (e.g., from time.time())
             
         Returns:
             True if trigger should fire

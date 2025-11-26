@@ -126,7 +126,7 @@ def main():
             
             # Calculate similarity (simple MSE)
             if image.shape == reconstructed_image.shape:
-                mse = np.mean((image.astype(float) - reconstructed_image.astype(float)) ** 2)
+                mse = np.mean((image.astype(np.float32) - reconstructed_image.astype(np.float32)) ** 2)
                 print(f"\n8. Image quality metrics:")
                 print(f"   MSE: {mse:.2f}")
                 if mse < 100:

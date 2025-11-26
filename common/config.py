@@ -46,6 +46,7 @@ PHOTO_JPEG_QUALITY = 95  # Higher quality for photo mode
 # SSDV settings
 SSDV_CALLSIGN = "LORA01"  # Default callsign for SSDV packets
 SSDV_IMAGE_ID = 0  # Starting image ID
+SSDV_MAX_IMAGE_ID = 256  # Maximum image ID (wraps around)
 SSDV_PACKET_DELAY = 0.01  # Delay between SSDV packets (10ms)
 SSDV_WIDTH = 320  # SSDV recommended resolution
 SSDV_HEIGHT = 240

@@ -280,6 +280,10 @@ class SSDVDecoder:
         # Extract payload
         payload = packet[SSDV_PKT_SIZE_HEADER:SSDV_PKT_SIZE_HEADER + payload_size]
         
+        # Note: Payload may contain padding (null bytes) at the end.
+        # This is handled during JPEG reconstruction in get_jpeg() method
+        # which looks for the JPEG EOI marker (0xFF 0xD9) to trim padding.
+        
         return {
             'type': packet_type,
             'callsign': decode_callsign(callsign_encoded),
