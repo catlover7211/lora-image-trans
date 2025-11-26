@@ -48,6 +48,6 @@ SSDV_CALLSIGN = "LORA01"  # Default callsign for SSDV packets
 SSDV_IMAGE_ID = 0  # Starting image ID
 SSDV_MAX_IMAGE_ID = 256  # Maximum image ID (wraps around)
 SSDV_PACKET_DELAY = 0.15  # Delay between SSDV packets (150ms) for LoRa stability
-SSDV_WIDTH = 16*120  # SSDV recommended resolution
-SSDV_HEIGHT = 9*120
+SSDV_WIDTH = 16*20  # SSDV recommended resolution
+SSDV_HEIGHT = 9*20
 SSDV_QUALITY = 2  # SSDV quality level 0-7 (4 = balanced)
