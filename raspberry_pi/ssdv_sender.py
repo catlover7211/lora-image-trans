@@ -22,7 +22,7 @@ from common.protocol import encode_frame, TYPE_SSDV
 from common.ssdv import SSDVEncoder
 from common.config import (
     SSDV_WIDTH, SSDV_HEIGHT, SSDV_QUALITY, SSDV_CALLSIGN, 
-    SSDV_IMAGE_ID, SSDV_PACKET_DELAY, SSDV_MAX_IMAGE_ID, DEFAULT_JPEG_QUALITY
+    SSDV_IMAGE_ID, SSDV_PACKET_DELAY, SSDV_MAX_IMAGE_ID, PHOTO_JPEG_QUALITY
 )
 
 
@@ -90,7 +90,7 @@ def main():
         print(f"Manual Trigger: interval={args.trigger_interval}s")
     
     # Initialize JPEG encoder (for creating JPEG before SSDV encoding)
-    jpeg_encoder = JPEGEncoder(quality=DEFAULT_JPEG_QUALITY)
+    jpeg_encoder = JPEGEncoder(quality=PHOTO_JPEG_QUALITY)
     
     # Initialize SSDV encoder
     ssdv_encoder = SSDVEncoder(
