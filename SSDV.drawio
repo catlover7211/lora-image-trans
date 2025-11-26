@@ -1,9 +1,146 @@
 <mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Safari/605.1.15" version="29.1.1">
   <diagram name="第 1 页" id="xcp3NJ-pMnVCt3wrU3AC">
-    <mxGraphModel>
+    <mxGraphModel dx="1394" dy="861" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-1" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="PC (接收端)" vertex="1">
+          <mxGeometry height="1000" width="312" x="29" y="1246" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-2" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="Raspberry Pi (發送端)" vertex="1">
+          <mxGeometry height="1152" width="330" x="20" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-3" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="CameraCapture" vertex="1">
+          <mxGeometry height="54" width="172" x="99" y="45" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-4" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="MotionDetector" vertex="1">
+          <mxGeometry height="54" width="171" x="100" y="173" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-5" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="主迴圈 (ssdv_sender.py)" vertex="1">
+          <mxGeometry height="54" width="231" x="69" y="301" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-6" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="JPEGEncoder" vertex="1">
+          <mxGeometry height="54" width="154" x="108" y="429" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-7" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="SSDVEncoder (common/ssdv.py)" vertex="1">
+          <mxGeometry height="78" width="260" x="55" y="557" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-8" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="SSDV Packets (256 bytes)" vertex="1">
+          <mxGeometry height="54" width="238" x="66" y="709" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-9" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="Protocol (TYPE_SSDV)" vertex="1">
+          <mxGeometry height="54" width="215" x="78" y="837" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-10" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="SerialComm" vertex="1">
+          <mxGeometry height="54" width="145" x="112" y="965" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-11" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="ESP32 LoRa Module" vertex="1">
+          <mxGeometry height="54" width="197" x="86" y="1093" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-12" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="ESP32 LoRa Module" vertex="1">
+          <mxGeometry height="54" width="197" x="86" y="1271" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-13" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="SerialComm" vertex="1">
+          <mxGeometry height="54" width="145" x="112" y="1399" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-14" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="主迴圈 (ssdv_receiver.py)" vertex="1">
+          <mxGeometry height="54" width="242" x="64" y="1527" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-15" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="decode_frame" vertex="1">
+          <mxGeometry height="54" width="163" x="104" y="1655" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-16" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="SSDVDecoder" vertex="1">
+          <mxGeometry height="54" width="154" x="108" y="1783" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-17" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="Packet Buffer" vertex="1">
+          <mxGeometry height="54" width="157" x="106" y="1911" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-18" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="JPEGDecoder" vertex="1">
+          <mxGeometry height="54" width="155" x="108" y="2039" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-19" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="檔案儲存 / 預覽" vertex="1">
+          <mxGeometry height="54" width="174" x="98" y="2167" as="geometry" />
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-20" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-3" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-4" value="原始影像">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-21" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-4" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-5" value="偵測到移動觸發">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-22" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-5" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-6" value="1. 編碼">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-23" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-6" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-7" value="JPEG Bytes">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-24" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-7" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-8" value="2. 切割封包">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-25" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-8" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-9" value="3. 封裝">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-26" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-9" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-10" value="Frame Data">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-27" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-10" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-11" value="UART">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-28" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-12" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-13" value="UART">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-29" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-13" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-14" value="Byte Stream">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-30" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-14" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-15" value="解析 Frame">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-31" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-15" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-16" value="TYPE_SSDV">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-32" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-16" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-17" value="累積封包">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-33" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-17" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-18" value="嘗試解碼">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-34" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-18" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-19" value="部分/完整影像">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-35" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-11" style="curved=1;dashed=1;dashPattern=2 3;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-12" value="無線傳輸 LoRa FEC 保護">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
       </root>
     </mxGraphModel>
   </diagram>
