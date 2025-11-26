@@ -1,11 +1,11 @@
 <mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Safari/605.1.15" version="29.1.1">
   <diagram name="第 1 页" id="JdMi2NVrQa_33ebcPsEr">
-    <mxGraphModel dx="2440" dy="1508" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+    <mxGraphModel dx="1394" dy="2030" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
         <mxCell id="OllNiTDzqnffubU2z-3e-1" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="PC (接收端)" vertex="1">
-          <mxGeometry height="955" width="455" x="26" y="1095" as="geometry" />
+          <mxGeometry height="955" width="455" x="600" y="20" as="geometry" />
         </mxCell>
         <mxCell id="OllNiTDzqnffubU2z-3e-2" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="Raspberry Pi (發送端)" vertex="1">
           <mxGeometry height="1001" width="466" x="20" y="20" as="geometry" />
@@ -35,28 +35,28 @@
           <mxGeometry height="54" width="197" x="157" y="942" as="geometry" />
         </mxCell>
         <mxCell id="OllNiTDzqnffubU2z-3e-11" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="ESP32 LoRa Module" vertex="1">
-          <mxGeometry height="54" width="197" x="157" y="1120" as="geometry" />
+          <mxGeometry height="54" width="197" x="731" y="45" as="geometry" />
         </mxCell>
         <mxCell id="OllNiTDzqnffubU2z-3e-12" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="SerialComm" vertex="1">
-          <mxGeometry height="54" width="145" x="183" y="1248" as="geometry" />
+          <mxGeometry height="54" width="145" x="757" y="173" as="geometry" />
         </mxCell>
         <mxCell id="OllNiTDzqnffubU2z-3e-13" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="主迴圈 (receiver.py)" vertex="1">
-          <mxGeometry height="54" width="204" x="154" y="1376" as="geometry" />
+          <mxGeometry height="54" width="204" x="728" y="301" as="geometry" />
         </mxCell>
         <mxCell id="OllNiTDzqnffubU2z-3e-14" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="decode_frame" vertex="1">
-          <mxGeometry height="54" width="163" x="174" y="1504" as="geometry" />
+          <mxGeometry height="54" width="163" x="748" y="429" as="geometry" />
         </mxCell>
         <mxCell id="OllNiTDzqnffubU2z-3e-15" parent="1" style="rhombus;strokeWidth=2;whiteSpace=wrap;" value="Frame Type" vertex="1">
-          <mxGeometry height="137" width="137" x="187" y="1632" as="geometry" />
+          <mxGeometry height="137" width="137" x="761" y="557" as="geometry" />
         </mxCell>
         <mxCell id="OllNiTDzqnffubU2z-3e-16" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="JPEGDecoder" vertex="1">
-          <mxGeometry height="54" width="155" x="80" y="1842" as="geometry" />
+          <mxGeometry height="54" width="155" x="654" y="767" as="geometry" />
         </mxCell>
         <mxCell id="OllNiTDzqnffubU2z-3e-17" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="CSDecoder" vertex="1">
-          <mxGeometry height="54" width="136" x="285" y="1842" as="geometry" />
+          <mxGeometry height="54" width="136" x="859" y="767" as="geometry" />
         </mxCell>
         <mxCell id="OllNiTDzqnffubU2z-3e-18" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="OpenCV Display Window" vertex="1">
-          <mxGeometry height="54" width="233" x="139" y="1970" as="geometry" />
+          <mxGeometry height="54" width="233" x="713" y="895" as="geometry" />
         </mxCell>
         <mxCell id="OllNiTDzqnffubU2z-3e-19" edge="1" parent="1" source="OllNiTDzqnffubU2z-3e-3" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="OllNiTDzqnffubU2z-3e-4" value="原始影像">
           <mxGeometry relative="1" as="geometry">
@@ -129,34 +129,39 @@
         <mxCell id="OllNiTDzqnffubU2z-3e-31" edge="1" parent="1" source="OllNiTDzqnffubU2z-3e-15" style="curved=1;startArrow=none;endArrow=block;exitX=0.04;exitY=1;entryX=0.5;entryY=0.01;rounded=0;" target="OllNiTDzqnffubU2z-3e-16" value="TYPE_JPEG">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="158" y="1805" />
+              <mxPoint x="732" y="730" />
             </Array>
           </mxGeometry>
         </mxCell>
         <mxCell id="OllNiTDzqnffubU2z-3e-32" edge="1" parent="1" source="OllNiTDzqnffubU2z-3e-15" style="curved=1;startArrow=none;endArrow=block;exitX=0.96;exitY=1;entryX=0.5;entryY=0.01;rounded=0;" target="OllNiTDzqnffubU2z-3e-17" value="TYPE_CS">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="353" y="1805" />
+              <mxPoint x="927" y="730" />
             </Array>
           </mxGeometry>
         </mxCell>
         <mxCell id="OllNiTDzqnffubU2z-3e-33" edge="1" parent="1" source="OllNiTDzqnffubU2z-3e-16" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1.01;entryX=0.32;entryY=0.01;rounded=0;" target="OllNiTDzqnffubU2z-3e-18" value="還原影像">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="158" y="1933" />
+              <mxPoint x="732" y="858" />
             </Array>
           </mxGeometry>
         </mxCell>
         <mxCell id="OllNiTDzqnffubU2z-3e-34" edge="1" parent="1" source="OllNiTDzqnffubU2z-3e-17" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1.01;entryX=0.68;entryY=0.01;rounded=0;" target="OllNiTDzqnffubU2z-3e-18" value="還原影像">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="353" y="1933" />
+              <mxPoint x="927" y="858" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="OllNiTDzqnffubU2z-3e-35" edge="1" parent="1" source="OllNiTDzqnffubU2z-3e-10" style="curved=1;dashed=1;dashPattern=2 3;startArrow=none;endArrow=block;exitX=0.5;exitY=0.99;entryX=0.5;entryY=-0.01;rounded=0;" target="OllNiTDzqnffubU2z-3e-11" value="無線傳輸 LoRa">
+        <mxCell id="OllNiTDzqnffubU2z-3e-35" edge="1" parent="1" source="OllNiTDzqnffubU2z-3e-10" style="curved=0;dashed=1;dashPattern=2 3;startArrow=none;endArrow=block;exitX=0.5;exitY=0.99;entryX=0.5;entryY=-0.01;rounded=0;" target="OllNiTDzqnffubU2z-3e-11" value="無線傳輸 LoRa">
           <mxGeometry relative="1" as="geometry">
-            <Array as="points" />
+            <Array as="points">
+              <mxPoint x="256" y="1060" />
+              <mxPoint x="540" y="1060" />
+              <mxPoint x="540" />
+              <mxPoint x="830" />
+            </Array>
           </mxGeometry>
         </mxCell>
       </root>
