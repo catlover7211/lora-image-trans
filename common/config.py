@@ -9,6 +9,7 @@ FRAME_START = b'\xAA\x55'
 FRAME_END = b'\x55\xAA'
 TYPE_JPEG = 0x01
 TYPE_CS = 0x02  # Compressed Sensing
+TYPE_SSDV = 0x03  # SSDV (Slow Scan Digital Video)
 
 # Image settings
 DEFAULT_WIDTH = 16*10
@@ -41,3 +42,11 @@ WINDOW_TITLE_PHOTO_RECEIVER = 'Photo Receiver'
 PHOTO_WIDTH = 640  # Higher resolution for photo mode
 PHOTO_HEIGHT = 480
 PHOTO_JPEG_QUALITY = 95  # Higher quality for photo mode
+
+# SSDV settings
+SSDV_CALLSIGN = "LORA01"  # Default callsign for SSDV packets
+SSDV_IMAGE_ID = 0  # Starting image ID
+SSDV_PACKET_DELAY = 0.01  # Delay between SSDV packets (10ms)
+SSDV_WIDTH = 320  # SSDV recommended resolution
+SSDV_HEIGHT = 240
+SSDV_QUALITY = 4  # SSDV quality level 0-7 (4 = balanced)
