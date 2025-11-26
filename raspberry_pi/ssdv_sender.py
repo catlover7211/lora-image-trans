@@ -185,7 +185,7 @@ def main():
                 ssdv_packets = ssdv_encoder.encode(jpeg_data)
                 print(f"Generated {len(ssdv_packets)} SSDV packets (256 bytes each)")
                 
-                est_time = len(ssdv_packets) * args.packet_delay
+                est_time = len(ssdv_packets) * args.packet_delay * 2
                 print(f"Estimated transmission time: {est_time:.1f}s (Delay: {args.packet_delay}s/packet)")
 
                 # Send each SSDV packet via protocol frames
