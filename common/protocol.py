@@ -13,7 +13,7 @@ from __future__ import annotations
 import struct
 from typing import Optional, Tuple
 
-from .config import FRAME_START, FRAME_END, TYPE_JPEG, TYPE_CS, MAX_FRAME_SIZE
+from .config import FRAME_START, FRAME_END, TYPE_JPEG, TYPE_CS, TYPE_SSDV, MAX_FRAME_SIZE
 
 
 def crc16(data: bytes) -> int:
@@ -115,5 +115,7 @@ def get_frame_type_name(frame_type: int) -> str:
         return "JPEG"
     elif frame_type == TYPE_CS:
         return "CS"
+    elif frame_type == TYPE_SSDV:
+        return "SSDV"
     else:
         return f"Unknown(0x{frame_type:02X})"
