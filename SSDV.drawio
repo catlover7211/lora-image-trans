@@ -1,11 +1,11 @@
 <mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Safari/605.1.15" version="29.1.1">
   <diagram name="第 1 页" id="xcp3NJ-pMnVCt3wrU3AC">
-    <mxGraphModel dx="1394" dy="861" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+    <mxGraphModel dx="1394" dy="2030" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
         <mxCell id="pFGFu9hwPoXzctk8KRGd-1" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="PC (接收端)" vertex="1">
-          <mxGeometry height="1000" width="312" x="29" y="1246" as="geometry" />
+          <mxGeometry height="1000" width="312" x="420" y="20" as="geometry" />
         </mxCell>
         <mxCell id="pFGFu9hwPoXzctk8KRGd-2" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="Raspberry Pi (發送端)" vertex="1">
           <mxGeometry height="1152" width="330" x="20" y="20" as="geometry" />
@@ -38,28 +38,28 @@
           <mxGeometry height="54" width="197" x="86" y="1093" as="geometry" />
         </mxCell>
         <mxCell id="pFGFu9hwPoXzctk8KRGd-12" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="ESP32 LoRa Module" vertex="1">
-          <mxGeometry height="54" width="197" x="86" y="1271" as="geometry" />
+          <mxGeometry height="54" width="197" x="477" y="45" as="geometry" />
         </mxCell>
         <mxCell id="pFGFu9hwPoXzctk8KRGd-13" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="SerialComm" vertex="1">
-          <mxGeometry height="54" width="145" x="112" y="1399" as="geometry" />
+          <mxGeometry height="54" width="145" x="503" y="173" as="geometry" />
         </mxCell>
         <mxCell id="pFGFu9hwPoXzctk8KRGd-14" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="主迴圈 (ssdv_receiver.py)" vertex="1">
-          <mxGeometry height="54" width="242" x="64" y="1527" as="geometry" />
+          <mxGeometry height="54" width="242" x="455" y="301" as="geometry" />
         </mxCell>
         <mxCell id="pFGFu9hwPoXzctk8KRGd-15" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="decode_frame" vertex="1">
-          <mxGeometry height="54" width="163" x="104" y="1655" as="geometry" />
+          <mxGeometry height="54" width="163" x="495" y="429" as="geometry" />
         </mxCell>
         <mxCell id="pFGFu9hwPoXzctk8KRGd-16" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="SSDVDecoder" vertex="1">
-          <mxGeometry height="54" width="154" x="108" y="1783" as="geometry" />
+          <mxGeometry height="54" width="154" x="499" y="557" as="geometry" />
         </mxCell>
         <mxCell id="pFGFu9hwPoXzctk8KRGd-17" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="Packet Buffer" vertex="1">
-          <mxGeometry height="54" width="157" x="106" y="1911" as="geometry" />
+          <mxGeometry height="54" width="157" x="497" y="685" as="geometry" />
         </mxCell>
         <mxCell id="pFGFu9hwPoXzctk8KRGd-18" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="JPEGDecoder" vertex="1">
-          <mxGeometry height="54" width="155" x="108" y="2039" as="geometry" />
+          <mxGeometry height="54" width="155" x="499" y="813" as="geometry" />
         </mxCell>
         <mxCell id="pFGFu9hwPoXzctk8KRGd-19" parent="1" style="whiteSpace=wrap;strokeWidth=2;" value="檔案儲存 / 預覽" vertex="1">
-          <mxGeometry height="54" width="174" x="98" y="2167" as="geometry" />
+          <mxGeometry height="54" width="174" x="489" y="941" as="geometry" />
         </mxCell>
         <mxCell id="pFGFu9hwPoXzctk8KRGd-20" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-3" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-4" value="原始影像">
           <mxGeometry relative="1" as="geometry">
@@ -136,9 +136,15 @@
             <Array as="points" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="pFGFu9hwPoXzctk8KRGd-35" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-11" style="curved=1;dashed=1;dashPattern=2 3;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-12" value="無線傳輸 LoRa FEC 保護">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points" />
+        <mxCell id="pFGFu9hwPoXzctk8KRGd-35" edge="1" parent="1" source="pFGFu9hwPoXzctk8KRGd-11" style="curved=0;dashed=1;dashPattern=2 3;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pFGFu9hwPoXzctk8KRGd-12" value="無線傳輸 LoRa FEC 保護">
+          <mxGeometry relative="1" x="0.1445" y="-10" as="geometry">
+            <mxPoint y="1" as="offset" />
+            <Array as="points">
+              <mxPoint x="185" y="1210" />
+              <mxPoint x="390" y="1210" />
+              <mxPoint x="390" />
+              <mxPoint x="576" />
+            </Array>
           </mxGeometry>
         </mxCell>
       </root>
