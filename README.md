@@ -48,6 +48,14 @@
 2. **照片模式（高清照片）**
    - 擷取並傳輸單張高品質照片
    - 高解析度：640x480
+
+3. **SSDV 模式（移動偵測觸發）** ⭐ 新功能
+   - 移動偵測或定時觸發拍照
+   - SSDV 協定：固定 256 位元組封包
+   - 更好的錯誤容忍和部分影像恢復
+   - 建議解析度：320x240
+   - 適合間歇性傳輸，節省頻寬
+   - 詳細說明：[SSDV 使用指南](docs/SSDV_README.md)
    - 高 JPEG 品質：95
    - 確保照片高清
    - 支援預覽與儲存
@@ -146,10 +154,18 @@ cd pc
 python receiver.py --mode photo [--save photo.jpg]
 ```
 
+**SSDV 模式（移動偵測觸發）：** ⭐ 新功能
+```bash
+cd pc
+python ssdv_receiver.py --auto-save [--show-partial]
+```
+
 **參數：**
 - `--mode`: 運作模式 `cctv` 或 `photo`（預設：cctv）
 - `--port`: 指定串列埠（可選，會自動偵測）
 - `--save`: 儲存接收到的照片（僅照片模式）
+- `--auto-save`: 自動儲存完整 SSDV 影像（SSDV 模式）
+- `--show-partial`: 顯示部分接收的影像（SSDV 模式）
 
 ### 3. 啟動發送端 (Raspberry Pi)
 
@@ -169,6 +185,16 @@ python sender.py --mode cctv --codec cs --cs-rate 0.3 --fps 10 [--preview]
 ```bash
 cd raspberry_pi
 python sender.py --mode photo [--preview]
+```
+
+**SSDV 模式（移動偵測觸發）：** ⭐ 新功能
+```bash
+cd raspberry_pi
+# 自動移動偵測
+python ssdv_sender.py --motion-mode auto --preview
+
+# 定時觸發（每 10 秒）
+python ssdv_sender.py --motion-mode manual --trigger-interval 10.0 --preview
 ```
 
 **參數：**
