@@ -73,6 +73,18 @@ class CameraCapture:
             print(f"Error capturing frame: {e}")
             return None
     
+    def flush(self, count: int = 5) -> None:
+        """Flush camera buffer by reading and discarding frames.
+        
+        Args:
+            count: Number of frames to read and discard
+        """
+        if self.cap is None or not self.cap.isOpened():
+            return
+            
+        for _ in range(count):
+            self.cap.grab()
+    
     def close(self) -> None:
         """Release camera resources."""
         if self.cap is not None:

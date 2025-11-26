@@ -225,6 +225,11 @@ def main():
                 # In non-continuous mode, reset detector
                 if not args.continuous and args.motion_mode == 'auto':
                     detector.reset()
+                
+                # Flush camera buffer to ensure next frame is fresh
+                # This prevents processing old frames that accumulated during transmission
+                print("Flushing camera buffer...")
+                camera.flush()
             
             # Small delay to prevent CPU spinning
             time.sleep(0.03)  # ~30 FPS check rate
