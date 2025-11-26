@@ -41,7 +41,7 @@ WINDOW_TITLE_PHOTO_RECEIVER = 'Photo Receiver'
 # Photo mode settings
 PHOTO_WIDTH = 640  # Higher resolution for photo mode
 PHOTO_HEIGHT = 480
-PHOTO_JPEG_QUALITY = 95  # Higher quality for photo mode
+PHOTO_JPEG_QUALITY = 70  # Higher quality for photo mode
 
 # SSDV settings
 SSDV_CALLSIGN = "LORA01"  # Default callsign for SSDV packets
