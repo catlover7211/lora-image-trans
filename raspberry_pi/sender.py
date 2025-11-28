@@ -93,7 +93,7 @@ def parse_args() -> argparse.Namespace:
 
 def cleanup_resources(camera, serial_comm, preview_enabled):
     """Clean up camera, serial, and display resources."""
-    print("\nCleaning up...")
+    print("\n正在清理資源...")
     camera.close()
     serial_comm.close()
     if preview_enabled:
@@ -117,29 +117,29 @@ def main():
         window_title = WINDOW_TITLE_SENDER
     
     print("=" * 60)
-    print(f"Raspberry Pi Image Sender - {args.mode.upper()} Mode")
+    print(f"Raspberry Pi 影像發送端 - {args.mode.upper()} 模式")
     print("=" * 60)
-    print(f"Codec: {args.codec.upper()}")
-    print(f"Resolution: {width}x{height}")
+    print(f"編碼: {args.codec.upper()}")
+    print(f"解析度: {width}x{height}")
     if args.mode == MODE_CCTV:
-        print(f"Target FPS: {args.fps}")
+        print(f"目標 FPS: {args.fps}")
     
     # Initialize camera
     camera = CameraCapture(camera_index=args.camera, width=width, height=height)
     if not camera.open():
-        print("Failed to open camera")
+        print("無法開啟攝影機")
         return
     
     # Initialize encoder
     if args.codec == 'jpeg':
         encoder = JPEGEncoder(quality=jpeg_quality)
         frame_type = TYPE_JPEG
-        print(f"JPEG Quality: {jpeg_quality}")
+        print(f"JPEG 品質: {jpeg_quality}")
     else:  # cs
         encoder = CSEncoder(measurement_rate=args.cs_rate, block_size=args.cs_block)
         frame_type = TYPE_CS
-        print(f"CS Measurement Rate: {args.cs_rate}")
-        print(f"CS Block Size: {args.cs_block}")
+        print(f"CS 採樣率: {args.cs_rate}")
+        print(f"CS 區塊大小: {args.cs_block}")
     
     # Initialize serial communication
     serial_comm = SerialComm(
@@ -148,21 +148,21 @@ def main():
         chunk_delay_s=max(0.0, args.chunk_delay_ms / 1000.0)
     )
     if not serial_comm.open():
-        print("Failed to open serial port")
+        print("無法開啟 Serial Port")
         camera.close()
         return
     
     print("=" * 60)
-    print("System initialized successfully")
+    print("系統初始化成功")
     if args.inter_frame_delay > 0:
-        print(f"Inter-frame delay: {args.inter_frame_delay:.3f}s")
+        print(f"幀間延遲: {args.inter_frame_delay:.3f}s")
     if args.chunk_delay_ms > 0:
-        print(f"Chunk delay: {args.chunk_delay_ms:.3f}ms")
+        print(f"區塊延遲: {args.chunk_delay_ms:.3f}ms")
     
     if args.mode == MODE_PHOTO:
-        print("Press 'q' in preview window or Ctrl+C to capture photo")
+        print("在預覽視窗按 'q' 或按 Ctrl+C 拍攝照片")
     else:
-        print("Press 'q' in preview window or Ctrl+C to quit")
+        print("在預覽視窗按 'q' 或按 Ctrl+C 退出")
     print("=" * 60)
     
     # Photo mode: capture and send single image
@@ -170,12 +170,12 @@ def main():
         try:
             # Wait for user to be ready if preview is enabled
             if args.preview:
-                print("\nShowing camera preview...")
-                print("Press 'q' to capture photo or Ctrl+C to cancel")
+                print("\n顯示攝影機預覽...")
+                print("按 'q' 拍攝照片或按 Ctrl+C 取消")
                 while True:
                     frame = camera.capture()
                     if frame is None:
-                        print("Warning: Failed to capture preview frame")
+                        print("警告: 無法擷取預覽畫面")
                         time.sleep(0.1)
                         continue
                     
@@ -188,32 +188,32 @@ def main():
                 time.sleep(0.5)
             
             # Capture the photo
-            print("\nCapturing photo...")
+            print("\n正在拍攝照片...")
             frame = camera.capture()
             if frame is None:
-                print("Error: Failed to capture photo")
+                print("錯誤: 無法拍攝照片")
                 cleanup_resources(camera, serial_comm, args.preview)
                 return
             
             # Show captured image if preview enabled
             if args.preview:
                 cv2.imshow(window_title, frame)
-                print("Photo captured! Press any key to send...")
+                print("照片已拍攝! 按任意鍵發送...")
                 cv2.waitKey(0)
             
             # Encode frame
-            print("Encoding photo...")
+            print("正在編碼照片...")
             encoded_data = encoder.encode(frame)
             if encoded_data is None:
-                print("Error: Failed to encode photo")
+                print("錯誤: 無法編碼照片")
                 cleanup_resources(camera, serial_comm, args.preview)
                 return
             # Ensure JPEG fits protocol limit
             if frame_type == TYPE_JPEG and len(encoded_data) > MAX_FRAME_SIZE:
-                print(f"Encoded JPEG too large ({len(encoded_data)} bytes). Reducing quality/size to fit {MAX_FRAME_SIZE}...")
+                print(f"編碼後的 JPEG 太大 ({len(encoded_data)} bytes)。正在降低品質/大小以符合 {MAX_FRAME_SIZE}...")
                 adjusted = _encode_jpeg_with_limit(encoder, frame, MAX_FRAME_SIZE)
                 if adjusted is None or len(adjusted) > MAX_FRAME_SIZE:
-                    print("Error: Unable to reduce JPEG below protocol size limit")
+                    print("錯誤: 無法將 JPEG 縮小至協議限制以下")
                     cleanup_resources(camera, serial_comm, args.preview)
                     return
                 encoded_data = adjusted
@@ -222,19 +222,19 @@ def main():
             try:
                 protocol_frame = encode_frame(frame_type, encoded_data)
             except ValueError as e:
-                print(f"Error: Failed to build frame: {e}")
+                print(f"錯誤: 無法建立幀: {e}")
                 cleanup_resources(camera, serial_comm, args.preview)
                 return
             
             # Send via serial
-            print(f"Sending photo ({len(encoded_data)} bytes encoded, {len(protocol_frame)} bytes total)...")
+            print(f"正在發送照片 ({len(encoded_data)} bytes 編碼, {len(protocol_frame)} bytes 總計)...")
             if not serial_comm.send(protocol_frame):
-                print("Error: Failed to send photo")
+                print("錯誤: 無法發送照片")
             else:
-                print("Photo sent successfully!")
+                print("照片發送成功!")
         
         except KeyboardInterrupt:
-            print("\n\nCancelled by user")
+            print("\n\n使用者取消")
         
         finally:
             # Cleanup
@@ -263,7 +263,7 @@ def main():
             frame = camera.capture()
             if frame is None:
                 error_count += 1
-                print("Warning: Failed to capture frame")
+                print("警告: 無法擷取畫面")
                 time.sleep(0.1)
                 continue
             
@@ -272,20 +272,20 @@ def main():
                 cv2.imshow(window_title, frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
-                    print("\nQuit requested by user")
+                    print("\n使用者請求退出")
                     break
             
             # Encode frame
             encoded_data = encoder.encode(frame)
             if encoded_data is None:
                 error_count += 1
-                print("Warning: Failed to encode frame")
+                print("警告: 無法編碼畫面")
                 continue
             if frame_type == TYPE_JPEG and len(encoded_data) > MAX_FRAME_SIZE:
                 adjusted = _encode_jpeg_with_limit(encoder, frame, MAX_FRAME_SIZE)
                 if adjusted is None or len(adjusted) > MAX_FRAME_SIZE:
                     error_count += 1
-                    print("Warning: JPEG exceeds protocol limit and could not be reduced")
+                    print("警告: JPEG 超過協議限制且無法縮小")
                     continue
                 encoded_data = adjusted
             
@@ -294,13 +294,13 @@ def main():
                 protocol_frame = encode_frame(frame_type, encoded_data)
             except ValueError as e:
                 error_count += 1
-                print(f"Warning: Failed to build frame: {e}")
+                print(f"警告: 無法建立幀: {e}")
                 continue
             
             # Send via serial
             if not serial_comm.send(protocol_frame):
                 error_count += 1
-                print("Warning: Failed to send frame")
+                print("警告: 無法發送幀")
                 continue
             
             # Update statistics
@@ -311,14 +311,14 @@ def main():
             if frame_count % 10 == 0:
                 elapsed_total = current_time - start_time
                 actual_fps = frame_count / elapsed_total if elapsed_total > 0 else 0
-                print(f"Frames: {frame_count}, "
-                      f"Encoded size: {len(encoded_data)} bytes, "
-                      f"Frame size: {len(protocol_frame)} bytes, "
+                print(f"幀數: {frame_count}, "
+                      f"編碼大小: {len(encoded_data)} bytes, "
+                      f"幀大小: {len(protocol_frame)} bytes, "
                       f"FPS: {actual_fps:.2f}, "
-                      f"Errors: {error_count}")
+                      f"錯誤: {error_count}")
     
     except KeyboardInterrupt:
-        print("\n\nInterrupted by user")
+        print("\n\n使用者中斷")
     
     finally:
         # Cleanup
@@ -328,12 +328,12 @@ def main():
         total_time = time.time() - start_time
         avg_fps = frame_count / total_time if total_time > 0 else 0
         print("\n" + "=" * 60)
-        print("Session Statistics")
+        print("工作階段統計")
         print("=" * 60)
-        print(f"Total frames: {frame_count}")
-        print(f"Total errors: {error_count}")
-        print(f"Total time: {total_time:.2f} seconds")
-        print(f"Average FPS: {avg_fps:.2f}")
+        print(f"總幀數: {frame_count}")
+        print(f"總錯誤: {error_count}")
+        print(f"總時間: {total_time:.2f} 秒")
+        print(f"平均 FPS: {avg_fps:.2f}")
         print("=" * 60)
 
 

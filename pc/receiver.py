@@ -43,7 +43,7 @@ def main():
     window_title = WINDOW_TITLE_PHOTO_RECEIVER if args.mode == MODE_PHOTO else WINDOW_TITLE_RECEIVER
     
     print("=" * 60)
-    print(f"PC Image Receiver - {args.mode.upper()} Mode")
+    print(f"PC 影像接收端 - {args.mode.upper()} 模式")
     print("=" * 60)
     
     # Initialize decoders
@@ -53,26 +53,55 @@ def main():
     # Initialize serial communication
     serial_comm = SerialComm(port=args.port)
     if not serial_comm.open():
-        print("Failed to open serial port")
+        print("無法開啟 Serial Port")
         return
     
+    # Autostart handshake
+    print("\n" + "-" * 30)
+    print("Raspberry Pi 自動啟動控制")
+    print("-" * 30)
+    print("1. 發送 'ssdv start' (啟動 SSDV 發送端)")
+    print("2. 發送 'start' (啟動標準發送端)")
+    print("3. 跳過 (不發送指令)")
+    
+    while True:
+        choice = input("請選擇 (1-3): ").strip()
+        if choice in ['1', '2', '3']:
+            break
+        print("無效的選擇，請重試。")
+    
+    if choice == '1':
+        print("正在發送 'ssdv start'...")
+        if serial_comm.ser:
+            serial_comm.ser.write(b"ssdv start\n")
+            serial_comm.ser.flush()
+    elif choice == '2':
+        print("正在發送 'start'...")
+        if serial_comm.ser:
+            serial_comm.ser.write(b"start\n")
+            serial_comm.ser.flush()
+    else:
+        print("跳過發送啟動指令。")
+    
+    time.sleep(2) # Wait for Pi to start the script
+    
     print("=" * 60)
-    print("System initialized successfully")
+    print("系統初始化成功")
     
     if args.mode == MODE_PHOTO:
-        print("Waiting for photo...")
+        print("等待照片中...")
         if args.save:
-            print(f"Will save to: {args.save}")
+            print(f"將儲存至: {args.save}")
     else:
-        print("Waiting for frames...")
+        print("等待幀中...")
     
-    print("Press 'q' in display window or Ctrl+C to quit")
+    print("在顯示視窗按 'q' 或按 Ctrl+C 退出")
     print("=" * 60)
     
     # Photo mode: receive and display single image
     if args.mode == MODE_PHOTO:
         try:
-            print("\nWaiting to receive photo...")
+            print("\n等待接收照片...")
             
             # Receive frame
             frame_bytes = None
@@ -80,18 +109,18 @@ def main():
                 frame_bytes = serial_comm.receive_frame()
                 time.sleep(0.01)  # 10ms delay to reduce CPU usage
             
-            print(f"Received {len(frame_bytes)} bytes")
+            print(f"已接收 {len(frame_bytes)} bytes")
             
             # Decode protocol frame
             result = decode_frame(frame_bytes)
             if result is None:
-                print("Error: Invalid frame received")
+                print("錯誤: 接收到無效的幀")
                 serial_comm.close()
                 return
             
             frame_type, data = result
-            print(f"Frame type: {get_frame_type_name(frame_type)}")
-            print(f"Data size: {len(data)} bytes")
+            print(f"幀類型: {get_frame_type_name(frame_type)}")
+            print(f"資料大小: {len(data)} bytes")
             
             # Decode image based on type
             image = None
@@ -100,33 +129,33 @@ def main():
             elif frame_type == TYPE_CS:
                 image = cs_decoder.decode(data, iterations=args.gap_iters)
             else:
-                print(f"Error: Unknown frame type: {frame_type}")
+                print(f"錯誤: 未知的幀類型: {frame_type}")
                 serial_comm.close()
                 return
             
             if image is None:
-                print(f"Error: Failed to decode {get_frame_type_name(frame_type)} image")
+                print(f"錯誤: 無法解碼 {get_frame_type_name(frame_type)} 影像")
                 serial_comm.close()
                 return
             
-            print(f"Photo decoded successfully! Resolution: {image.shape[1]}x{image.shape[0]}")
+            print(f"照片解碼成功! 解析度: {image.shape[1]}x{image.shape[0]}")
             
             # Save if requested
             if args.save:
                 cv2.imwrite(args.save, image)
-                print(f"Photo saved to: {args.save}")
+                print(f"照片已儲存至: {args.save}")
             
             # Display image
-            print("\nDisplaying photo. Press any key to close...")
+            print("\n顯示照片中。按任意鍵關閉...")
             cv2.imshow(window_title, image)
             cv2.waitKey(0)
         
         except KeyboardInterrupt:
-            print("\n\nInterrupted by user")
+            print("\n\n使用者中斷")
         
         finally:
             # Cleanup
-            print("\nCleaning up...")
+            print("\n正在清理資源...")
             serial_comm.close()
             cv2.destroyAllWindows()
         
@@ -186,13 +215,13 @@ def main():
                 if last_display is not None:
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord('q'):
-                        print("\nQuit requested by user")
+                        print("\n使用者請求退出")
                         break
                 if args.debug_buffer:
                     buf_level = serial_comm.get_buffer_level()
                     usage = buf_level / max(1, serial_comm.get_buffer_capacity())
                     if usage > 0.7 and time.time() - last_buffer_warn > 0.5:
-                        print(f"[SerialBuffer] usage={usage*100:.1f}% ({buf_level} bytes cached)")
+                        print(f"[SerialBuffer] 使用率={usage*100:.1f}% ({buf_level} bytes 已快取)")
                         last_buffer_warn = time.time()
                 time.sleep(0.001)
                 continue
@@ -203,13 +232,13 @@ def main():
                 error_count += 1
                 invalid_frames += 1
                 # More detailed error logging
-                print(f"Warning: Invalid frame received (length: {len(frame_bytes)} bytes)")
+                print(f"警告: 接收到無效的幀 (長度: {len(frame_bytes)} bytes)")
                 if len(frame_bytes) >= 9:
                     # Debug: Print header and footer
                     header = frame_bytes[:5]
                     footer = frame_bytes[-2:]
-                    print(f"  Header: {header.hex().upper()}")
-                    print(f"  Footer: {footer.hex().upper()}")
+                    print(f"  標頭: {header.hex().upper()}")
+                    print(f"  結尾: {footer.hex().upper()}")
                     # Check CRC manually for debug
                     try:
                         from common.protocol import crc16
@@ -218,16 +247,16 @@ def main():
                             crc_received = (payload_with_crc[-2] << 8) | payload_with_crc[-1]
                             payload = payload_with_crc[:-2]
                             crc_calc = crc16(payload)
-                            print(f"  CRC: Recv={crc_received:04X}, Calc={crc_calc:04X}")
+                            print(f"  CRC: 接收={crc_received:04X}, 計算={crc_calc:04X}")
                             if crc_received != crc_calc:
-                                print("  -> CRC Mismatch")
+                                print("  -> CRC 不符")
                             
                             # Check length field
                             data_len = (frame_bytes[3] << 8) | frame_bytes[4]
                             real_data_len = len(payload) - 1 # minus TYPE
-                            print(f"  Length field: {data_len}, Actual payload: {real_data_len}")
+                            print(f"  長度欄位: {data_len}, 實際 payload: {real_data_len}")
                     except Exception as e:
-                        print(f"  Debug error: {e}")
+                        print(f"  除錯錯誤: {e}")
                 continue
             
             frame_type, data = result
@@ -239,19 +268,19 @@ def main():
                 jpeg_count += 1
             elif frame_type == TYPE_CS:
                 if args.gap_iters > 0:
-                    print(f"Decoding CS frame (GAP {args.gap_iters} iters)...", end='\r', flush=True)
+                    print(f"正在解碼 CS 幀 (GAP {args.gap_iters} 次迭代)...", end='\r', flush=True)
                 image = cs_decoder.decode(data, iterations=args.gap_iters)
                 if args.gap_iters > 0:
                     print(" " * 40, end='\r', flush=True) # Clear line
                 cs_count += 1
             else:
                 error_count += 1
-                print(f"Warning: Unknown frame type: {frame_type}")
+                print(f"警告: 未知的幀類型: {frame_type}")
                 continue
             
             if image is None:
                 error_count += 1
-                print(f"Warning: Failed to decode {get_frame_type_name(frame_type)} image")
+                print(f"警告: 無法解碼 {get_frame_type_name(frame_type)} 影像")
                 continue
             
             # Display image
@@ -259,7 +288,7 @@ def main():
             last_display = image
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
-                print("\nQuit requested by user")
+                print("\n使用者請求退出")
                 break
             
             # Update statistics
@@ -270,17 +299,17 @@ def main():
                 elapsed = time.time() - start_time
                 fps = frame_count / elapsed if elapsed > 0 else 0
                 error_rate = (error_count / (frame_count + error_count) * 100) if (frame_count + error_count) > 0 else 0
-                print(f"Frames: {frame_count} (JPEG: {jpeg_count}, CS: {cs_count}), "
-                      f"Data size: {len(data)} bytes, "
+                print(f"幀數: {frame_count} (JPEG: {jpeg_count}, CS: {cs_count}), "
+                      f"資料大小: {len(data)} bytes, "
                       f"FPS: {fps:.2f}, "
-                      f"Errors: {error_count} ({error_rate:.1f}%)")
+                      f"錯誤: {error_count} ({error_rate:.1f}%)")
     
     except KeyboardInterrupt:
-        print("\n\nInterrupted by user")
+        print("\n\n使用者中斷")
     
     finally:
         # Cleanup
-        print("\nCleaning up...")
+        print("\n正在清理資源...")
         if 'poller' in locals():
             poller.stop()
         serial_comm.close()
@@ -292,17 +321,17 @@ def main():
         total_received = frame_count + error_count
         success_rate = (frame_count / total_received * 100) if total_received > 0 else 0
         print("\n" + "=" * 60)
-        print("Session Statistics")
+        print("工作階段統計")
         print("=" * 60)
-        print(f"Total frames received: {total_received}")
-        print(f"Successfully decoded: {frame_count}")
-        print(f"JPEG frames: {jpeg_count}")
-        print(f"CS frames: {cs_count}")
-        print(f"Total errors: {error_count}")
-        print(f"Invalid frames: {invalid_frames}")
-        print(f"Success rate: {success_rate:.1f}%")
-        print(f"Total time: {total_time:.2f} seconds")
-        print(f"Average FPS: {avg_fps:.2f}")
+        print(f"總接收幀數: {total_received}")
+        print(f"成功解碼: {frame_count}")
+        print(f"JPEG 幀數: {jpeg_count}")
+        print(f"CS 幀數: {cs_count}")
+        print(f"總錯誤: {error_count}")
+        print(f"無效幀: {invalid_frames}")
+        print(f"成功率: {success_rate:.1f}%")
+        print(f"總時間: {total_time:.2f} 秒")
+        print(f"平均 FPS: {avg_fps:.2f}")
         print("=" * 60)
 
 

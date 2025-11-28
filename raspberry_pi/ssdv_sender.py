@@ -64,18 +64,18 @@ def main():
     args = parse_args()
     
     print("=" * 70)
-    print("SSDV Image Sender with Motion Detection")
+    print("SSDV 影像發送端 (含移動偵測)")
     print("=" * 70)
-    print(f"Resolution: {args.width}x{args.height}")
-    print(f"Callsign: {args.callsign}")
-    print(f"SSDV Quality: {args.quality} (0=highest compression, 7=lowest)")
-    print(f"Motion Mode: {args.motion_mode}")
-    print(f"Packet Delay: {args.packet_delay}s")
+    print(f"解析度: {args.width}x{args.height}")
+    print(f"呼號: {args.callsign}")
+    print(f"SSDV 品質: {args.quality} (0=最高壓縮, 7=最低)")
+    print(f"移動偵測模式: {args.motion_mode}")
+    print(f"封包延遲: {args.packet_delay}s")
     
     # Initialize camera
     camera = CameraCapture(camera_index=args.camera, width=args.width, height=args.height)
     if not camera.open():
-        print("Failed to open camera")
+        print("無法開啟攝影機")
         return
     
     # Initialize motion detector or manual trigger
@@ -84,10 +84,10 @@ def main():
             threshold=args.motion_threshold,
             min_area=args.motion_area
         )
-        print(f"Motion Detection: threshold={args.motion_threshold}, min_area={args.motion_area}")
+        print(f"移動偵測: 閾值={args.motion_threshold}, 最小面積={args.motion_area}")
     else:
         detector = ManualTrigger(trigger_interval=args.trigger_interval)
-        print(f"Manual Trigger: interval={args.trigger_interval}s")
+        print(f"手動觸發: 間隔={args.trigger_interval}s")
     
     # Initialize JPEG encoder (for creating JPEG before SSDV encoding)
     jpeg_encoder = JPEGEncoder(quality=PHOTO_JPEG_QUALITY)
@@ -103,17 +103,17 @@ def main():
     # Initialize serial communication
     serial_comm = SerialComm(port=args.port, inter_frame_delay=args.packet_delay)
     if not serial_comm.open():
-        print("Failed to open serial port")
+        print("無法開啟 Serial Port")
         camera.close()
         return
     
     print("=" * 70)
-    print("System initialized successfully")
+    print("系統初始化成功")
     if args.continuous:
-        print("Continuous mode: Will capture and transmit on every trigger")
+        print("連續模式: 每次觸發都會擷取並傳輸")
     else:
-        print("Single-shot mode: Will capture once per motion/trigger")
-    print("Press Ctrl+C to quit")
+        print("單次模式: 每次移動/觸發僅擷取一次")
+    print("按 Ctrl+C 退出")
     print("=" * 70)
     
     image_count = 0
@@ -125,7 +125,7 @@ def main():
             # Capture frame
             frame = camera.capture()
             if frame is None:
-                print("Warning: Failed to capture frame")
+                print("警告: 無法擷取畫面")
                 time.sleep(0.1)
                 continue
             
@@ -141,7 +141,7 @@ def main():
                     cv2.imshow('SSDV Sender - Motion Detection', display_frame)
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord('q'):
-                        print("\nQuit requested by user")
+                        print("\n使用者請求退出")
                         break
                 
                 should_capture = motion_detected
@@ -159,7 +159,7 @@ def main():
                     cv2.imshow('SSDV Sender - Manual Trigger', display_frame)
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord('q'):
-                        print("\nQuit requested by user")
+                        print("\n使用者請求退出")
                         break
             
             # Apply cooldown in non-continuous mode
@@ -168,28 +168,28 @@ def main():
             
             if should_capture:
                 print(f"\n{'='*70}")
-                print(f"Capture triggered! (Image #{image_count + 1})")
+                print(f"觸發擷取! (影像 #{image_count + 1})")
                 print(f"{'='*70}")
                 
                 # Encode frame as JPEG first
-                print("Encoding JPEG...")
+                print("正在編碼 JPEG...")
                 jpeg_data = jpeg_encoder.encode(frame)
                 if jpeg_data is None:
-                    print("Error: Failed to encode JPEG")
+                    print("錯誤: 無法編碼 JPEG")
                     continue
                 
-                print(f"JPEG size: {len(jpeg_data)} bytes")
+                print(f"JPEG 大小: {len(jpeg_data)} bytes")
                 
                 # Encode JPEG as SSDV packets
-                print("Creating SSDV packets...")
+                print("正在建立 SSDV 封包...")
                 ssdv_packets = ssdv_encoder.encode(jpeg_data)
-                print(f"Generated {len(ssdv_packets)} SSDV packets (256 bytes each)")
+                print(f"產生了 {len(ssdv_packets)} 個 SSDV 封包 (每個 256 bytes)")
                 
                 est_time = len(ssdv_packets) * args.packet_delay * 2
-                print(f"Estimated transmission time: {est_time:.1f}s (Delay: {args.packet_delay}s/packet)")
+                print(f"預估傳輸時間: {est_time:.1f}s (延遲: {args.packet_delay}s/封包)")
 
                 # Send each SSDV packet via protocol frames
-                print("Transmitting SSDV packets...")
+                print("正在傳輸 SSDV 封包...")
                 sent_packets = 0
                 failed_packets = 0
                 
@@ -201,18 +201,18 @@ def main():
                     if serial_comm.send(protocol_frame):
                         sent_packets += 1
                         if (i + 1) % 10 == 0 or (i + 1) == len(ssdv_packets):
-                            print(f"  Sent packet {i+1}/{len(ssdv_packets)}")
+                            print(f"  已發送封包 {i+1}/{len(ssdv_packets)}")
                     else:
                         failed_packets += 1
-                        print(f"  Warning: Failed to send packet {i+1}")
+                        print(f"  警告: 無法發送封包 {i+1}")
                     
                     # Delay between packets
                     if args.packet_delay > 0 and i < len(ssdv_packets) - 1:
                         time.sleep(args.packet_delay)
                 
                 print(f"{'='*70}")
-                print(f"Transmission complete: {sent_packets} sent, {failed_packets} failed")
-                print(f"Total data: {len(ssdv_packets) * 256} bytes")
+                print(f"傳輸完成: {sent_packets} 成功, {failed_packets} 失敗")
+                print(f"總資料量: {len(ssdv_packets) * 256} bytes")
                 print(f"{'='*70}")
                 
                 # Update counters
@@ -228,18 +228,18 @@ def main():
                 
                 # Flush camera buffer to ensure next frame is fresh
                 # This prevents processing old frames that accumulated during transmission
-                print("Flushing camera buffer...")
+                print("正在清除攝影機緩衝區...")
                 camera.flush()
             
             # Small delay to prevent CPU spinning
             time.sleep(0.03)  # ~30 FPS check rate
     
     except KeyboardInterrupt:
-        print("\n\nInterrupted by user")
+        print("\n\n使用者中斷")
     
     finally:
         # Cleanup
-        print("\nCleaning up...")
+        print("\n正在清理資源...")
         camera.close()
         serial_comm.close()
         if args.preview:
@@ -247,9 +247,9 @@ def main():
         
         # Print final statistics
         print("\n" + "=" * 70)
-        print("Session Statistics")
+        print("工作階段統計")
         print("=" * 70)
-        print(f"Total images captured and transmitted: {image_count}")
+        print(f"總共擷取並傳輸的影像數: {image_count}")
         print("=" * 70)
 
 
