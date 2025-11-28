@@ -1,0 +1,14 @@
+[Unit]
+Description=LoRa Image Sender Autostart
+After=network.target
+
+[Service]
+ExecStart=/home/catlover/lora-image-trans/venv/bin/python /home/catlover/lora-image-trans/raspberry_pi/autostart.py
+WorkingDirectory=/home/catlover/lora-image-trans/raspberry_pi
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+User=catlover
+
+[Install]
+WantedBy=multi-user.target
