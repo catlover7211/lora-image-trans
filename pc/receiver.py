@@ -8,6 +8,7 @@ import sys
 import time
 import threading
 from pathlib import Path
+import msvcrt
 
 import cv2
 
@@ -96,7 +97,7 @@ def main():
         print("等待幀中...")
     
     print("在顯示視窗按 'q' 或按 Ctrl+C 退出")
-    print("按 's' 發送停止指令")
+    print("在終端機按 's' 發送停止指令")
     print("=" * 60)
     
     # Photo mode: receive and display single image
@@ -208,6 +209,24 @@ def main():
 
     try:
         while True:
+            # Check CLI input
+            if msvcrt.kbhit():
+                ch = msvcrt.getch()
+                try:
+                    char = ch.decode('utf-8').lower()
+                except:
+                    char = None
+                
+                if char == 's':
+                    print("\n發送停止指令...")
+                    stop_frame = encode_frame(TYPE_STOP, b'')
+                    if serial_comm.ser:
+                        serial_comm.ser.write(stop_frame)
+                        serial_comm.ser.flush()
+                elif char == 'q':
+                    print("\n使用者請求退出")
+                    break
+
             # Receive frame from poller (memory) instead of serial (IO)
             frame_bytes = poller.get_latest()
             
@@ -291,12 +310,6 @@ def main():
             if key == ord('q'):
                 print("\n使用者請求退出")
                 break
-            elif key == ord('s'):
-                print("\n發送停止指令...")
-                stop_frame = encode_frame(TYPE_STOP, b'')
-                if serial_comm.ser:
-                    serial_comm.ser.write(stop_frame)
-                    serial_comm.ser.flush()
             
             # Update statistics
             frame_count += 1

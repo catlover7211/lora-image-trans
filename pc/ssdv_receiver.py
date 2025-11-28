@@ -8,6 +8,7 @@ import sys
 import time
 from pathlib import Path
 from datetime import datetime
+import msvcrt
 
 import cv2
 import numpy as np
@@ -96,7 +97,7 @@ def main():
     if args.show_partial:
         print("已啟用部分影像預覽")
     print("按 Ctrl+C 退出")
-    print("按 's' 發送停止指令 (需在預覽視窗中)")
+    print("在終端機按 's' 發送停止指令")
     print("=" * 70)
     
     # Statistics
@@ -112,6 +113,24 @@ def main():
     
     try:
         while True:
+            # Check CLI input
+            if msvcrt.kbhit():
+                ch = msvcrt.getch()
+                try:
+                    char = ch.decode('utf-8').lower()
+                except:
+                    char = None
+                
+                if char == 's':
+                    print("\n發送停止指令...")
+                    stop_frame = encode_frame(TYPE_STOP, b'')
+                    if serial_comm.ser:
+                        serial_comm.ser.write(stop_frame)
+                        serial_comm.ser.flush()
+                elif char == 'q':
+                    print("\n使用者請求退出")
+                    break
+
             # Receive frame from serial
             frame_data = serial_comm.receive_frame()
             
@@ -197,12 +216,6 @@ def main():
                             key = cv2.waitKey(1) & 0xFF
                             if key == ord('q'):
                                 raise KeyboardInterrupt
-                            elif key == ord('s'):
-                                print("\n發送停止指令...")
-                                stop_frame = encode_frame(TYPE_STOP, b'')
-                                if serial_comm.ser:
-                                    serial_comm.ser.write(stop_frame)
-                                    serial_comm.ser.flush()
                             
                             # Save if requested
                             if args.auto_save:
@@ -234,12 +247,6 @@ def main():
                             key = cv2.waitKey(1) & 0xFF
                             if key == ord('q'):
                                 raise KeyboardInterrupt
-                            elif key == ord('s'):
-                                print("\n發送停止指令...")
-                                stop_frame = encode_frame(TYPE_STOP, b'')
-                                if serial_comm.ser:
-                                    serial_comm.ser.write(stop_frame)
-                                    serial_comm.ser.flush()
     
     except KeyboardInterrupt:
         print("\n\n使用者中斷")
