@@ -47,7 +47,9 @@ def main():
                     try:
                         line = ser.readline().decode('utf-8', errors='ignore').strip()
                         if line:
-                            print(f"收到: {line}")
+                            # Filter out flow control messages
+                            if not line.startswith("[FC]"):
+                                print(f"收到: {line}")
                             
                         if line == "ssdv start":
                             print("收到指令: ssdv start")
