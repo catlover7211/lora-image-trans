@@ -18,7 +18,7 @@ from camera_capture import CameraCapture
 from motion_detector import MotionDetector, ManualTrigger
 from jpeg_encoder import JPEGEncoder
 from serial_comm import SerialComm
-from common.protocol import encode_frame, TYPE_SSDV
+from common.protocol import encode_frame, decode_frame, TYPE_SSDV, TYPE_STOP
 from common.ssdv import SSDVEncoder
 from common.config import (
     SSDV_WIDTH, SSDV_HEIGHT, SSDV_QUALITY, SSDV_CALLSIGN, 
@@ -122,6 +122,16 @@ def main():
     
     try:
         while True:
+            # Check for incoming commands (e.g. STOP)
+            incoming_frame = serial_comm.receive_frame()
+            if incoming_frame:
+                result = decode_frame(incoming_frame)
+                if result:
+                    frame_type_in, _ = result
+                    if frame_type_in == TYPE_STOP:
+                        print("\n收到停止指令，正在停止發送...")
+                        break
+
             # Capture frame
             frame = camera.capture()
             if frame is None:
@@ -194,6 +204,16 @@ def main():
                 failed_packets = 0
                 
                 for i, ssdv_packet in enumerate(ssdv_packets):
+                    # Check for stop command
+                    incoming_frame = serial_comm.receive_frame()
+                    if incoming_frame:
+                        result = decode_frame(incoming_frame)
+                        if result:
+                            frame_type_in, _ = result
+                            if frame_type_in == TYPE_STOP:
+                                print("\n收到停止指令，正在停止發送...")
+                                raise KeyboardInterrupt
+
                     # Wrap SSDV packet in protocol frame
                     protocol_frame = encode_frame(TYPE_SSDV, ssdv_packet)
                     

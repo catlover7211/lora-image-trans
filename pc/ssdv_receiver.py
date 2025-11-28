@@ -18,7 +18,7 @@ if str(BASE_DIR) not in sys.path:
 
 from serial_comm import SerialComm
 from jpeg_decoder import JPEGDecoder
-from common.protocol import decode_frame, TYPE_SSDV, get_frame_type_name
+from common.protocol import decode_frame, encode_frame, TYPE_SSDV, TYPE_STOP, get_frame_type_name
 from common.ssdv import SSDVDecoder
 
 
@@ -96,6 +96,7 @@ def main():
     if args.show_partial:
         print("已啟用部分影像預覽")
     print("按 Ctrl+C 退出")
+    print("按 's' 發送停止指令 (需在預覽視窗中)")
     print("=" * 70)
     
     # Statistics
@@ -193,8 +194,15 @@ def main():
                             window_name = "SSDV Receiver"
                             cv2.imshow(window_name, image)
                             print("顯示影像中...")
-                            if (cv2.waitKey(1) & 0xFF) == ord('q'):
+                            key = cv2.waitKey(1) & 0xFF
+                            if key == ord('q'):
                                 raise KeyboardInterrupt
+                            elif key == ord('s'):
+                                print("\n發送停止指令...")
+                                stop_frame = encode_frame(TYPE_STOP, b'')
+                                if serial_comm.ser:
+                                    serial_comm.ser.write(stop_frame)
+                                    serial_comm.ser.flush()
                             
                             # Save if requested
                             if args.auto_save:
@@ -223,8 +231,15 @@ def main():
                         if image is not None:
                             window_name = "SSDV Receiver"
                             cv2.imshow(window_name, image)
-                            if (cv2.waitKey(1) & 0xFF) == ord('q'):
+                            key = cv2.waitKey(1) & 0xFF
+                            if key == ord('q'):
                                 raise KeyboardInterrupt
+                            elif key == ord('s'):
+                                print("\n發送停止指令...")
+                                stop_frame = encode_frame(TYPE_STOP, b'')
+                                if serial_comm.ser:
+                                    serial_comm.ser.write(stop_frame)
+                                    serial_comm.ser.flush()
     
     except KeyboardInterrupt:
         print("\n\n使用者中斷")

@@ -10,6 +10,7 @@ FRAME_END = b'\x55\xAA'
 TYPE_JPEG = 0x01
 TYPE_CS = 0x02  # Compressed Sensing
 TYPE_SSDV = 0x03  # SSDV (Slow Scan Digital Video)
+TYPE_STOP = 0x04  # Stop transmission command
 
 # Image settings
 DEFAULT_WIDTH = 16*10

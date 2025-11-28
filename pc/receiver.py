@@ -18,7 +18,7 @@ if str(BASE_DIR) not in sys.path:
 from jpeg_decoder import JPEGDecoder
 from cs_decoder import CSDecoder
 from serial_comm import SerialComm
-from common.protocol import decode_frame, get_frame_type_name, TYPE_JPEG, TYPE_CS
+from common.protocol import decode_frame, encode_frame, get_frame_type_name, TYPE_JPEG, TYPE_CS, TYPE_STOP
 from common.config import WINDOW_TITLE_RECEIVER, WINDOW_TITLE_PHOTO_RECEIVER, MODE_CCTV, MODE_PHOTO
 
 
@@ -96,6 +96,7 @@ def main():
         print("等待幀中...")
     
     print("在顯示視窗按 'q' 或按 Ctrl+C 退出")
+    print("按 's' 發送停止指令")
     print("=" * 60)
     
     # Photo mode: receive and display single image
@@ -290,6 +291,12 @@ def main():
             if key == ord('q'):
                 print("\n使用者請求退出")
                 break
+            elif key == ord('s'):
+                print("\n發送停止指令...")
+                stop_frame = encode_frame(TYPE_STOP, b'')
+                if serial_comm.ser:
+                    serial_comm.ser.write(stop_frame)
+                    serial_comm.ser.flush()
             
             # Update statistics
             frame_count += 1

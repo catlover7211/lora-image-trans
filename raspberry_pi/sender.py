@@ -18,7 +18,7 @@ from camera_capture import CameraCapture
 from jpeg_encoder import JPEGEncoder
 from cs_encoder import CSEncoder
 from serial_comm import SerialComm
-from common.protocol import encode_frame, TYPE_JPEG, TYPE_CS
+from common.protocol import encode_frame, decode_frame, TYPE_JPEG, TYPE_CS, TYPE_STOP
 from common.config import (
     DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_JPEG_QUALITY,
     WINDOW_TITLE_SENDER, WINDOW_TITLE_PHOTO_SENDER,
@@ -259,6 +259,16 @@ def main():
                     time.sleep(frame_interval - elapsed)
                     current_time = time.time()
             
+            # Check for incoming commands (e.g. STOP)
+            incoming_frame = serial_comm.receive_frame()
+            if incoming_frame:
+                result = decode_frame(incoming_frame)
+                if result:
+                    frame_type_in, _ = result
+                    if frame_type_in == TYPE_STOP:
+                        print("\n收到停止指令，正在停止發送...")
+                        break
+
             # Capture frame
             frame = camera.capture()
             if frame is None:
