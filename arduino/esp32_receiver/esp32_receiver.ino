@@ -46,6 +46,7 @@ void setup() {
   
   // 初始化 LoRa Serial (連接 LoRa 模組)
   LoRaSerial.setRxBufferSize(4096);
+  LoRaSerial.setTxBufferSize(1024); // Add TX buffer for commands
   LoRaSerial.begin(115200, SERIAL_8N1, RXD2, TXD2);
 
   // 設定合理的超時
@@ -94,9 +95,16 @@ void pump_to_usb() {
   }
 }
 
+void pump_from_usb() {
+  while (Serial.available() > 0) {
+    LoRaSerial.write(Serial.read());
+  }
+}
+
 void loop() {
   pump_from_lora();
   pump_to_usb();
+  pump_from_usb(); // Forward commands from PC to LoRa
 
   if (relay_fill == RELAY_BUFFER_SIZE) {
     // 以丟棄最舊資料的方式回復，避免完全阻塞

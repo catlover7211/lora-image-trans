@@ -160,6 +160,11 @@ void loop() {
     }
   }
 
+  // Forward incoming data from LoRa (e.g. commands) to Pi
+  while (LoRaSerial.available() > 0) {
+    Serial.write(LoRaSerial.read());
+  }
+
   report_flow_control();
 
   unsigned long current_time = millis();

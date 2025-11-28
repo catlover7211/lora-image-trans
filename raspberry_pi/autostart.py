@@ -51,12 +51,12 @@ def main():
                             if not line.startswith("[FC]"):
                                 print(f"收到: {line}")
                             
-                        if line == "ssdv start":
+                        if "ssdv start" in line:
                             print("收到指令: ssdv start")
                             cmd_to_run = [sys.executable, os.path.join(os.path.dirname(__file__), "ssdv_sender.py"), "--port", port]
                             break 
                             
-                        elif line == "start":
+                        elif "start" in line and "ssdv" not in line:
                             print("收到指令: start")
                             cmd_to_run = [sys.executable, os.path.join(os.path.dirname(__file__), "sender.py"), "--port", port]
                             break
