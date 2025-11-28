@@ -210,8 +210,8 @@ class SerialComm:
                     # Extract line
                     line_bytes = self._buffer[start_idx:newline_idx+1]
                     
-                    # Remove from buffer (and anything before it)
-                    del self._buffer[:newline_idx+1]
+                    # Remove ONLY the FC line from buffer (preserve data before it)
+                    del self._buffer[start_idx:newline_idx+1]
                     
                     # Process line
                     try:
