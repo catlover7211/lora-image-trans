@@ -219,6 +219,31 @@ python ssdv_sender.py --motion-mode manual --trigger-interval 10.0 --preview
 - **接收端緩衝監控**：PC 端 `receiver.py` 新增 `--debug-buffer` 參數，可在串流時輸出序列緩衝使用率，便於判斷是否需要降低 FPS/解析度。
 - **最佳化提示**：當 Raspberry Pi 觀察到 backlog 過大時會自動放慢幀速；若長時間 backlog 為 0，可酌情降低 `--inter-frame-delay` 以最多化吞吐。
 
+### 5. 開機自動啟動 (Raspberry Pi)
+
+若要讓 Raspberry Pi 開機後自動執行並等待指令，請依照以下步驟設定：
+
+1. **複製 Service 檔案**
+   ```bash
+   sudo cp raspberry_pi/lora-autostart.service /etc/systemd/system/
+   ```
+
+2. **啟用並啟動服務**
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable lora-autostart.service
+   sudo systemctl start lora-autostart.service
+   ```
+
+3. **查看狀態**
+   ```bash
+   sudo systemctl status lora-autostart.service
+   ```
+
+設定完成後，Raspberry Pi 開機時會自動執行 `autostart.py`，並等待 LoRa 接收端的指令：
+- 收到 `start`：啟動一般發送端 (`sender.py`)
+- 收到 `ssdv start`：啟動 SSDV 發送端 (`ssdv_sender.py`)
+
 ## 設定調整
 
 在 `common/config.py` 中可調整：
