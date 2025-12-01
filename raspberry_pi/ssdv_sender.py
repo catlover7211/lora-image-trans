@@ -127,7 +127,7 @@ def main():
             if line:
                 if not line.startswith("[FC]"):
                     print(f"收到: {line}")
-                    if "stop" in line.lower():
+                    if "STOP" in line.upper():
                         print("\n收到停止指令，正在停止發送...")
                         break
 
