@@ -228,7 +228,18 @@ def main():
                     
                     # Delay between packets
                     if args.packet_delay > 0 and i < len(ssdv_packets) - 1:
-                        time.sleep(args.packet_delay)
+                        start_sleep = time.time()
+                        while time.time() - start_sleep < args.packet_delay:
+                            # Check for stop command during delay
+                            incoming_frame = serial_comm.receive_frame()
+                            if incoming_frame:
+                                result = decode_frame(incoming_frame)
+                                if result:
+                                    frame_type_in, _ = result
+                                    if frame_type_in == TYPE_STOP:
+                                        print("\n收到停止指令，正在停止發送...")
+                                        raise KeyboardInterrupt
+                            time.sleep(0.01)
                 
                 print(f"{'='*70}")
                 print(f"傳輸完成: {sent_packets} 成功, {failed_packets} 失敗")

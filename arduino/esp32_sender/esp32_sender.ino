@@ -64,6 +64,10 @@ void flush_pipe() {
   }
   while (LoRaSerial.availableForWrite() < pipe_fill) {
     delayMicroseconds(LORA_WRITE_GUARD_US);
+    // Check for incoming data from LoRa while waiting for TX buffer space
+    while (LoRaSerial.available() > 0) {
+      Serial.write(LoRaSerial.read());
+    }
   }
   LoRaSerial.write(pipe_buffer, pipe_fill);
   pipe_fill = 0;
@@ -121,7 +125,16 @@ void setup() {
 }
 
 void loop() {
+  int processed_count = 0;
   while (Serial.available() > 0) {
+    // Check LoRa every 64 bytes to ensure we catch incoming commands
+    if (processed_count++ > 64) {
+       while (LoRaSerial.available() > 0) {
+         Serial.write(LoRaSerial.read());
+       }
+       processed_count = 0;
+    }
+
     uint8_t incoming_byte = Serial.read();
 
     if (!in_frame) {
