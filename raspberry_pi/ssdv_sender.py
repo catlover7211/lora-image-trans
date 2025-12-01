@@ -123,12 +123,11 @@ def main():
     try:
         while True:
             # Check for incoming commands (e.g. STOP)
-            incoming_frame = serial_comm.receive_frame()
-            if incoming_frame:
-                result = decode_frame(incoming_frame)
-                if result:
-                    frame_type_in, _ = result
-                    if frame_type_in == TYPE_STOP:
+            line = serial_comm.read_line()
+            if line:
+                if not line.startswith("[FC]"):
+                    print(f"收到: {line}")
+                    if "stop" in line.lower():
                         print("\n收到停止指令，正在停止發送...")
                         break
 
@@ -202,17 +201,18 @@ def main():
                 print("正在傳輸 SSDV 封包...")
                 sent_packets = 0
                 failed_packets = 0
+                aborted = False
                 
                 for i, ssdv_packet in enumerate(ssdv_packets):
                     # Check for stop command
-                    incoming_frame = serial_comm.receive_frame()
-                    if incoming_frame:
-                        result = decode_frame(incoming_frame)
-                        if result:
-                            frame_type_in, _ = result
-                            if frame_type_in == TYPE_STOP:
+                    line = serial_comm.read_line()
+                    if line:
+                        if not line.startswith("[FC]"):
+                            print(f"收到: {line}")
+                            if "stop" in line.lower():
                                 print("\n收到停止指令，正在停止發送...")
-                                raise KeyboardInterrupt
+                                aborted = True
+                                break
 
                     # Wrap SSDV packet in protocol frame
                     protocol_frame = encode_frame(TYPE_SSDV, ssdv_packet)
@@ -231,20 +231,27 @@ def main():
                         start_sleep = time.time()
                         while time.time() - start_sleep < args.packet_delay:
                             # Check for stop command during delay
-                            incoming_frame = serial_comm.receive_frame()
-                            if incoming_frame:
-                                result = decode_frame(incoming_frame)
-                                if result:
-                                    frame_type_in, _ = result
-                                    if frame_type_in == TYPE_STOP:
+                            line = serial_comm.read_line()
+                            if line:
+                                if not line.startswith("[FC]"):
+                                    print(f"收到: {line}")
+                                    if "stop" in line.lower():
                                         print("\n收到停止指令，正在停止發送...")
-                                        raise KeyboardInterrupt
+                                        aborted = True
+                                        break
                             time.sleep(0.01)
+                        if aborted:
+                            break
                 
-                print(f"{'='*70}")
-                print(f"傳輸完成: {sent_packets} 成功, {failed_packets} 失敗")
-                print(f"總資料量: {len(ssdv_packets) * 256} bytes")
-                print(f"{'='*70}")
+                if aborted:
+                    print(f"{'='*70}")
+                    print(f"傳輸已中止 (已發送 {sent_packets} 封包)")
+                    print(f"{'='*70}")
+                else:
+                    print(f"{'='*70}")
+                    print(f"傳輸完成: {sent_packets} 成功, {failed_packets} 失敗")
+                    print(f"總資料量: {len(ssdv_packets) * 256} bytes")
+                    print(f"{'='*70}")
                 
                 # Update counters
                 image_count += 1

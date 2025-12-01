@@ -332,6 +332,20 @@ class SerialComm:
                 'delay': self._adaptive_delay,
             }
     
+    def read_line(self) -> Optional[str]:
+        """Read a line from the buffer (for text-based commands/debugging)."""
+        with self._lock:
+            newline_idx = self._buffer.find(b'\n')
+            if newline_idx != -1:
+                # Extract line
+                line_bytes = self._buffer[:newline_idx+1]
+                del self._buffer[:newline_idx+1]
+                try:
+                    return line_bytes.decode('utf-8', errors='ignore').strip()
+                except Exception:
+                    return None
+        return None
+    
     def __enter__(self):
         """Context manager entry."""
         self.open()
