@@ -160,7 +160,7 @@ def main():
                     print("\n發送停止指令...")
                     # stop_frame = encode_frame(TYPE_STOP, b'')
                     if serial_comm.ser:
-                        serial_comm.ser.write(b'STOP\n')
+                        serial_comm.ser.write(b'STOP')
                         serial_comm.ser.flush()
                 elif char == 'q':
                     print("\n使用者請求退出")
