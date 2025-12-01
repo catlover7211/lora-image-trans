@@ -8,7 +8,42 @@ import sys
 import time
 from pathlib import Path
 from datetime import datetime
-import msvcrt
+
+# Cross-platform keyboard hit / getch shim
+try:
+    import msvcrt as _msvcrt
+
+    def kbhit():
+        return _msvcrt.kbhit()
+
+    def getch():
+        ch = _msvcrt.getch()
+        if isinstance(ch, bytes):
+            try:
+                return ch.decode('utf-8', errors='ignore')
+            except Exception:
+                return ''
+        return str(ch)
+
+except Exception:
+    import sys
+    import select
+    import tty
+    import termios
+
+    def kbhit():
+        dr, _, _ = select.select([sys.stdin], [], [], 0)
+        return bool(dr)
+
+    def getch():
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+            return ch
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 import cv2
 import numpy as np
@@ -113,12 +148,12 @@ def main():
     
     try:
         while True:
-            # Check CLI input
-            if msvcrt.kbhit():
-                ch = msvcrt.getch()
+            # Check CLI input (cross-platform)
+            if kbhit():
+                ch = getch()
                 try:
-                    char = ch.decode('utf-8').lower()
-                except:
+                    char = ch.lower()
+                except Exception:
                     char = None
                 
                 if char == 's':
