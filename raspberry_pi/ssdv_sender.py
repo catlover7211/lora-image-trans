@@ -123,13 +123,19 @@ def main():
     try:
         while True:
             # Check for incoming commands (e.g. STOP)
-            line = serial_comm.read_line()
-            if line:
+            stop_requested = False
+            while True:
+                line = serial_comm.read_line()
+                if not line:
+                    break
                 if not line.startswith("[FC]"):
                     print(f"收到: {line}")
                     if "STOP" in line.upper():
                         print("\n收到停止指令，正在停止發送...")
+                        stop_requested = True
                         break
+            if stop_requested:
+                break
 
             # Capture frame
             frame = camera.capture()
@@ -205,14 +211,18 @@ def main():
                 
                 for i, ssdv_packet in enumerate(ssdv_packets):
                     # Check for stop command
-                    line = serial_comm.read_line()
-                    if line:
+                    while True:
+                        line = serial_comm.read_line()
+                        if not line:
+                            break
                         if not line.startswith("[FC]"):
                             print(f"收到: {line}")
                             if "stop" in line.lower():
                                 print("\n收到停止指令，正在停止發送...")
                                 aborted = True
                                 break
+                    if aborted:
+                        break
 
                     # Wrap SSDV packet in protocol frame
                     protocol_frame = encode_frame(TYPE_SSDV, ssdv_packet)
@@ -231,14 +241,18 @@ def main():
                         start_sleep = time.time()
                         while time.time() - start_sleep < args.packet_delay:
                             # Check for stop command during delay
-                            line = serial_comm.read_line()
-                            if line:
+                            while True:
+                                line = serial_comm.read_line()
+                                if not line:
+                                    break
                                 if not line.startswith("[FC]"):
                                     print(f"收到: {line}")
                                     if "stop" in line.lower():
                                         print("\n收到停止指令，正在停止發送...")
                                         aborted = True
                                         break
+                            if aborted:
+                                break
                             time.sleep(0.01)
                         if aborted:
                             break
