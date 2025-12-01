@@ -158,9 +158,9 @@ def main():
                 
                 if char == 's':
                     print("\n發送停止指令...")
-                    stop_frame = encode_frame(TYPE_STOP, b'')
+                    # stop_frame = encode_frame(TYPE_STOP, b'')
                     if serial_comm.ser:
-                        serial_comm.ser.write(stop_frame)
+                        serial_comm.ser.write(b'STOP\n')
                         serial_comm.ser.flush()
                 elif char == 'q':
                     print("\n使用者請求退出")
